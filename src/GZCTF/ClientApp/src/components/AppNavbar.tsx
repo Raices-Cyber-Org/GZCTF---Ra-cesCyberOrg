@@ -185,21 +185,6 @@ const AppNavbar: FC = () => {
       >
         <Stack align="center" spacing={5}>
           {/* Language */}
-          <Menu position="right-end" offset={24} width={160}>
-            <Menu.Target>
-              <ActionIcon className={classes.link}>
-                <Icon path={mdiTranslate} size={1} />
-              </ActionIcon>
-            </Menu.Target>
-
-            <Menu.Dropdown>
-              {supportedLanguages.map((lang: SupportedLanguages) => (
-                <Menu.Item key={lang} onClick={() => setLanguage(lang)}>
-                  {LanguageMap[lang] ?? lang}
-                </Menu.Item>
-              ))}
-            </Menu.Dropdown>
-          </Menu>
 
           {/* Color Mode */}
           <Tooltip

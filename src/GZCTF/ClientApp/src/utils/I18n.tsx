@@ -4,9 +4,7 @@ import { useTranslation } from 'react-i18next'
 import resources from 'virtual:i18next-loader'
 
 export const LanguageMap = {
-  zh_CN: '简体中文',
   en_US: 'English',
-  ja_JP: '日本語',
 }
 
 export const defaultLanguage = 'en_US'
