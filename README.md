@@ -3,7 +3,7 @@
 # Raices Cyber Org CTF
 
 ![license](https://img.shields.io/github/license/GZTimeWalker/GZCTF?color=FF5531)
-![Raices Cyber Links](https://bio.link/raicescy)
+[Raices Cyber Links](https://bio.link/raicescy)
 
 Raices Cyber CTF is an open source platform made by the team ![GZ::CTF](https://github.com/GZTimeWalker/GZCTF).
 GZ::CTF is an open source CTF platform based on ASP.NET Core.
