@@ -19,7 +19,7 @@ services:
   db:
     image: postgres:alpine
     restart: always
-    environment:a
+    environment:
       - "POSTGRES_PASSWORD=CHANGE-THIS"
     volumes:
       - "./data/db:/var/lib/postgresql/data"

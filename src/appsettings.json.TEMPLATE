@@ -1,0 +1,47 @@
+{
+    "AllowedHosts": "*",
+    "ConnectionStrings": {
+      "Database": "Host=db:5432;Database=gzctf;Username=postgres;Password=CHANGE-THIS"
+    },
+    "EmailConfig": {
+      "SendMailAddress": "a@a.com",
+      "UserName": "",
+      "Password": "",
+      "Smtp": {
+        "Host": "localhost",
+        "Port": 587
+      }
+    },
+    "XorKey": "CHANGE-THIS",
+    "ContainerProvider": {
+      "Type": "Docker",
+      "PortMappingType": "Default",
+      "EnableTrafficCapture": false,
+      "PublicEntry": "127.0.0.1",
+      "DockerConfig": {
+        "SwarmMode": false,
+        "Uri": "unix:///var/run/docker.sock"
+      }
+    },
+    "RequestLogging": false,
+    "DisableRateLimit": true,
+    "RegistryConfig": {
+      "UserName": "",
+      "Password": "",
+      "ServerAddress": ""
+    },
+    "CaptchaConfig": {
+      "Provider": "None",
+      "SiteKey": "<Your SITE_KEY>",
+      "SecretKey": "<Your SECRET_KEY>",
+      "GoogleRecaptcha": {
+        "VerifyAPIAddress": "https://www.recaptcha.net/recaptcha/api/siteverify",
+        "RecaptchaThreshold": "0.5"
+      }
+    },
+    "ForwardedOptions": {
+      "ForwardedHeaders": 5,
+      "ForwardLimit": 1,
+      "TrustedNetworks": ["192.168.12.0/8"]
+    }
+  }

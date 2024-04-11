@@ -1,12 +1,7 @@
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/banner.dark.svg">
-  <img alt="Banner" src="assets/banner.light.svg">
-</picture>
+<img alt="Banner" src="assets/Raices_Cyber_Logo_High_Res_Color.png" width="300" height="300">
 
-# GZ::CTF
+# Raices Cyber Org CTF
 
-[![publish](https://github.com/GZTimeWalker/GZCTF/actions/workflows/ci.yml/badge.svg)](https://github.com/GZTimeWalker/GZCTF/actions/workflows/ci.yml)
-![version](https://img.shields.io/github/v/release/GZTimeWalker/GZCTF?include_prereleases&label=version)
 ![license](https://img.shields.io/github/license/GZTimeWalker/GZCTF?color=FF5531)
 [![Crowdin](https://badges.crowdin.net/gzctf/localized.svg)](https://crowdin.com/project/gzctf)
 
@@ -17,6 +12,8 @@
 [English](./README.md), [简体中文](./README.zh.md), [日本語](./README.ja.md)
 
 GZ::CTF is an open source CTF platform based on ASP.NET Core.
+Thanks to the developers over at GZCTF for making the platform.
+
 
 > [!IMPORTANT]
 >
