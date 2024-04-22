@@ -1,21 +1,14 @@
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/banner.dark.svg">
-  <img alt="Banner" src="assets/banner.light.svg">
-</picture>
+<img alt="Banner" src="assets/Raices_Cyber_Logo_High_Res_Color.png" width="300" height="300">
 
-# GZ::CTF
+# Raices Cyber Org CTF
 
-[![publish](https://github.com/GZTimeWalker/GZCTF/actions/workflows/ci.yml/badge.svg)](https://github.com/GZTimeWalker/GZCTF/actions/workflows/ci.yml)
-![version](https://img.shields.io/github/v/release/GZTimeWalker/GZCTF?include_prereleases&label=version)
 ![license](https://img.shields.io/github/license/GZTimeWalker/GZCTF?color=FF5531)
-[![Crowdin](https://badges.crowdin.net/gzctf/localized.svg)](https://crowdin.com/project/gzctf)
+[Raices Cyber Links](https://bio.link/raicescy)
 
-[![Telegram Group](https://img.shields.io/endpoint?color=blue&url=https%3A%2F%2Ftg.sumanjay.workers.dev%2Fgzctf)](https://telegram.dog/gzctf)
-[![QQ Group](https://img.shields.io/badge/QQ%20Group-903244818-blue)](https://jq.qq.com/?_wv=1027&k=muSqhF9x)
-
-[English](./README.md), [简体中文](./README.zh.md), [日本語](./README.ja.md)
-
+Raices Cyber CTF is an open source platform made by the team [GZTimeWalker](https://github.com/GZTimeWalker/GZCTF).
 GZ::CTF is an open source CTF platform based on ASP.NET Core.
+Thanks to the developers over at GZCTF for making the platform.
+
 
 > [!IMPORTANT]
 > **To save your effort, please read the documentation carefully before using: [https://docs.ctf.gzti.me/en](https://docs.ctf.gzti.me/en)**
@@ -76,47 +69,21 @@ GZ::CTF is an open source CTF platform based on ASP.NET Core.
 ![](assets/demo-8.png)
 ![](assets/demo-9.png)
 
-## About i18n 🌐
+## Deployment Notes
 
-Localization support is in progress, please refer to [translate.ctf.gzti.me](https://translate.ctf.gzti.me) to learn more or participate in the translation work.
+To deploy this project locally you need to build the `gzctf:raices` docker image. Run the following commands to do it:
 
-## Contributors 👋
+```shell
+git clone https://github.com/Raices-Cyber-Org/GZCTF-RaicesCyberOrg.git
+cd GZCTF-RaicesCyberOrg/src/
+# Make sure the pinned docker-compose.yml and appsettings.json are present in the folder
+docker image build -t gzctf:raices .
+docker compose up -d
+# Visit http://localhost
+```
 
-<a href="https://github.com/GZTimeWalker/GZCTF/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=GZTimeWalker/GZCTF" />
-</a>
+## More Information
 
-## CTF hosted with GZ::CTF 🏆
+For more information about the platform, head over to the Original Repository.
 
-Some event organizers have already chosen GZCTF and successfully completed their competitions. Their trust, support, and timely feedback are the primary driving force behind the continuous improvement of GZCTF.
 
-- **THUCTF 2022: Tsinghua University Network Security Technology Challenge**
-- **ZJUCTF 2022/2023: Zhejiang University CTF**
-- **SUSCTF 2022/2023: Southeast University Tiger Crouching, Dragon Coiling Cup Network Security Challenge**
-- **DIDCTF 2022/2023: Gansu Political and Legal University CTF**
-- **Woodpecker: The First Network Security Practice Competition of Shandong University of Science and Technology**
-- **NPUCTF 2022: Northwestern Polytechnical University CTF**
-- **SkyNICO Network Space Security Tri-school Competition (Xiamen University of Technology, Fujian Normal University, Qilu University of Technology)**
-- **Hunan Police Academy Network Security Attack and Defense Competition**
-- **W4terCTF 2023: The First Information Security Novice Competition of Sun Yat-sen University**
-- **TongjiCTF 2023: The Fifth Network Security Competition of Tongji University**
-- **CTBUCTF 2023: The First Network Security Competition of Chongqing Technology and Business University**
-- **NPUCTF 2023 - The First Security Experimental Skills Competition of Northwestern Polytechnical University**
-- **XZCTF 2023: The First Network Security Novice Competition of Zhejiang Normal University Xingzhi College**
-- **ORGCTF 2023: Gongcheng Cup Freshman Competition of Harbin Engineering University**
-- **SHCTF 2023: "Shanhe" Network Security Skills Challenge**
-- **Tianjin University of Science and Technology 2023 College Student Maker Training Camp Network Security Group Selection**
-- **HYNUCTF 2023: Xuantian Network Security Laboratory Recruitment Competition of Hunan Hengyang Normal University**
-- **NYNUCTF S4: Recruitment Competition of Xuantian Network Security Laboratory of Nanyang Normal University**
-- **The First Network Security Freshman Challenge of Shangqiu Normal University**
-- **SVUCTF-WINTER-2023: Suzhou Vocational University 2023 Winter Freshman Competition**
-
-_The list is not in any particular order, and PRs are welcome for additions._
-
-## Special Thanks ❤️‍🔥
-
-Thanks to NanoApe, the organizer of THUCTF 2022, for providing sponsorship and conducting Alibaba Cloud public network stress testing. This helped validate the service stability of the GZCTF standalone instance (16c90g) under the pressure of thousands of concurrent requests and 1.34 million requests in three minutes.
-
-## Stars ✨
-
-[![Stargazers over time](https://starchart.cc/GZTimeWalker/GZCTF.svg)](https://starchart.cc/GZTimeWalker/GZCTF)
