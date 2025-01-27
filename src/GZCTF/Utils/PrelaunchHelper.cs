@@ -1,4 +1,5 @@
 ﻿using GZCTF.Models.Internal;
+using GZCTF.Services.Cache;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Distributed;
@@ -16,7 +17,7 @@ public static class PrelaunchHelper
         var context = serviceScope.ServiceProvider.GetRequiredService<AppDbContext>();
         var cache = serviceScope.ServiceProvider.GetRequiredService<IDistributedCache>();
 
-        if (!context.Database.IsInMemory())
+        if (context.Database.GetMigrations().Any())
             await context.Database.MigrateAsync();
 
         await context.Database.EnsureCreatedAsync();
@@ -68,19 +69,27 @@ public static class PrelaunchHelper
             logger.SystemLog(Program.StaticLocalizer[nameof(Resources.Program.Init_CaptureNotAvailable)],
                 TaskStatus.Failed, LogLevel.Warning);
 
-        if (!cache.CacheCheck())
+        if (!cache.CacheCheck(logger))
             Program.ExitWithFatalMessage(Program.StaticLocalizer[nameof(Resources.Program.Init_InvalidCacheConfig)]);
+
+        await cache.RemoveAsync(CacheKey.Index);
+        await cache.RemoveAsync(CacheKey.ClientConfig);
+        await cache.RemoveAsync(CacheKey.CaptchaConfig);
     }
 
-    static bool CacheCheck(this IDistributedCache cache)
+    static bool CacheCheck(this IDistributedCache cache, ILogger<Program> logger)
     {
+        var version = typeof(Program).Assembly.GetName().Version?.ToString() ?? "unknown";
+        var cacheVersion = $"GZCTF@{version}";
+
         try
         {
-            cache.SetString("_ValidCheck", "GZCTF");
-            return cache.GetString("_ValidCheck") == "GZCTF";
+            cache.SetString("_ValidCheck", cacheVersion);
+            return cache.GetString("_ValidCheck") == cacheVersion;
         }
-        catch
+        catch (Exception e)
         {
+            logger.LogError(e, Program.StaticLocalizer[nameof(Resources.Program.Init_InvalidCacheConfig)]);
             return false;
         }
     }

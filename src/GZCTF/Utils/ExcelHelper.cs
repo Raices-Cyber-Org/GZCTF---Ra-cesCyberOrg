@@ -13,6 +13,8 @@ public class ExcelHelper(IStringLocalizer<Program> localizer)
         localizer[nameof(Resources.Program.Header_Team)],
         localizer[nameof(Resources.Program.Header_Captain)],
         localizer[nameof(Resources.Program.Header_Member)],
+        localizer[nameof(Resources.Program.Header_RealName)],
+        localizer[nameof(Resources.Program.Header_Email)],
         localizer[nameof(Resources.Program.Header_StdNumber)],
         localizer[nameof(Resources.Program.Header_PhoneNumber)],
         localizer[nameof(Resources.Program.Header_SolvedNumber)],
@@ -33,7 +35,7 @@ public class ExcelHelper(IStringLocalizer<Program> localizer)
 
     public MemoryStream GetScoreboardExcel(ScoreboardModel scoreboard, Game game)
     {
-        if (scoreboard.Items.FirstOrDefault()?.TeamInfo is null)
+        if (scoreboard.Items.Values.FirstOrDefault()?.TeamInfo is null)
             throw new ArgumentException(localizer[nameof(Resources.Program.Scoreboard_TeamNotLoaded)]);
 
         var workbook = new XSSFWorkbook();
@@ -60,7 +62,7 @@ public class ExcelHelper(IStringLocalizer<Program> localizer)
         return stream;
     }
 
-    ICellStyle GetHeaderStyle(XSSFWorkbook workbook)
+    static ICellStyle GetHeaderStyle(XSSFWorkbook workbook)
     {
         ICellStyle? style = workbook.CreateCellStyle();
         IFont? boldFontStyle = workbook.CreateFont();
@@ -93,14 +95,15 @@ public class ExcelHelper(IStringLocalizer<Program> localizer)
 
         foreach (Submission item in submissions)
         {
+            var colIndex = 0;
             IRow? row = sheet.CreateRow(rowIndex);
-            row.CreateCell(0).SetCellValue(item.Status.ToShortString(localizer));
-            row.CreateCell(1).SetCellValue(item.SubmitTimeUtc.ToString("u"));
-            row.CreateCell(2).SetCellValue(item.TeamName);
-            row.CreateCell(3).SetCellValue(item.UserName);
-            row.CreateCell(4).SetCellValue(item.ChallengeName);
-            row.CreateCell(5).SetCellValue(item.Answer);
-            row.CreateCell(6).SetCellValue(item.User.Email);
+            row.CreateCell(colIndex++).SetCellValue(item.Status.ToShortString(localizer));
+            row.CreateCell(colIndex++).SetCellValue(item.SubmitTimeUtc.ToString("u"));
+            row.CreateCell(colIndex++).SetCellValue(item.TeamName);
+            row.CreateCell(colIndex++).SetCellValue(item.UserName);
+            row.CreateCell(colIndex++).SetCellValue(item.ChallengeName);
+            row.CreateCell(colIndex++).SetCellValue(item.Answer);
+            row.CreateCell(colIndex).SetCellValue(item.User?.Email ?? string.Empty);
 
             rowIndex++;
         }
@@ -111,7 +114,7 @@ public class ExcelHelper(IStringLocalizer<Program> localizer)
         IRow? row = sheet.CreateRow(0);
         var colIndex = 0;
         var challIds = new List<int>();
-        var withOrg = game.Organizations is not null && game.Organizations.Count > 0;
+        var withOrg = game.Divisions is not null && game.Divisions.Count > 0;
 
         foreach (var col in _commonScoreboardHeader)
         {
@@ -123,28 +126,28 @@ public class ExcelHelper(IStringLocalizer<Program> localizer)
                 continue;
 
             cell = row.CreateCell(colIndex++);
-            cell.SetCellValue(localizer[nameof(Resources.Program.Scoreboard_BelongingOrganization)]);
+            cell.SetCellValue(localizer[nameof(Resources.Program.Scoreboard_BelongingDivision)]);
             cell.CellStyle = style;
         }
 
-        foreach (KeyValuePair<ChallengeTag, IEnumerable<ChallengeInfo>> type in scoreboard.Challenges)
-        foreach (ChallengeInfo chall in type.Value)
-        {
-            ICell? cell = row.CreateCell(colIndex++);
-            cell.SetCellValue(chall.Title);
-            cell.CellStyle = style;
-            challIds.Add(chall.Id);
-        }
+        foreach (KeyValuePair<ChallengeCategory, IEnumerable<ChallengeInfo>> type in scoreboard.Challenges)
+            foreach (ChallengeInfo chall in type.Value)
+            {
+                ICell? cell = row.CreateCell(colIndex++);
+                cell.SetCellValue(chall.Title);
+                cell.CellStyle = style;
+                challIds.Add(chall.Id);
+            }
 
         return challIds.ToArray();
     }
 
-    void WriteBoardContent(ISheet sheet, ScoreboardModel scoreboard, int[] challIds, Game game)
+    static void WriteBoardContent(ISheet sheet, ScoreboardModel scoreboard, int[] challIds, Game game)
     {
         var rowIndex = 1;
-        var withOrg = game.Organizations is not null && game.Organizations.Count > 0;
+        var withOrg = game.Divisions is not null && game.Divisions.Count > 0;
 
-        foreach (ScoreboardItem item in scoreboard.Items)
+        foreach (ScoreboardItem item in scoreboard.Items.Values)
         {
             var colIndex = 0;
             IRow? row = sheet.CreateRow(rowIndex);
@@ -152,13 +155,22 @@ public class ExcelHelper(IStringLocalizer<Program> localizer)
             row.CreateCell(colIndex++).SetCellValue(item.Name);
 
             if (withOrg)
-                row.CreateCell(colIndex++).SetCellValue(item.Organization);
+                row.CreateCell(colIndex++).SetCellValue(item.Division);
 
-            row.CreateCell(colIndex++).SetCellValue(item.TeamInfo!.Captain!.RealName);
-            row.CreateCell(colIndex++).SetCellValue(string.Join("/", item.TeamInfo!.Members.Select(m => m.RealName)));
-            row.CreateCell(colIndex++).SetCellValue(string.Join("/", item.TeamInfo!.Members.Select(m => m.StdNumber)));
+            row.CreateCell(colIndex++).SetCellValue(TakeIfNotEmpty(item.TeamInfo?.Captain?.UserName));
+
+            var members = item.Participants ?? [];
+
             row.CreateCell(colIndex++)
-                .SetCellValue(string.Join("/", item.TeamInfo!.Members.Select(m => m.PhoneNumber)));
+                .SetCellValue(string.Join(Split, members.Select(m => TakeIfNotEmpty(m.UserName))));
+            row.CreateCell(colIndex++)
+                .SetCellValue(string.Join(Split, members.Select(m => TakeIfNotEmpty(m.RealName))));
+            row.CreateCell(colIndex++)
+                .SetCellValue(string.Join(Split, members.Select(m => TakeIfNotEmpty(m.Email))));
+            row.CreateCell(colIndex++)
+                .SetCellValue(string.Join(Split, members.Select(m => TakeIfNotEmpty(m.StdNumber))));
+            row.CreateCell(colIndex++)
+                .SetCellValue(string.Join(Split, members.Select(m => TakeIfNotEmpty(m.PhoneNumber))));
 
             row.CreateCell(colIndex++).SetCellValue(item.SolvedCount);
             row.CreateCell(colIndex++).SetCellValue(item.LastSubmissionTime.ToString("u"));
@@ -166,11 +178,16 @@ public class ExcelHelper(IStringLocalizer<Program> localizer)
 
             foreach (var challId in challIds)
             {
-                ChallengeItem chall = item.Challenges.Single(c => c.Id == challId);
-                row.CreateCell(colIndex++).SetCellValue(chall.Score);
+                ChallengeItem? chall = item.SolvedChallenges.SingleOrDefault(c => c.Id == challId);
+                row.CreateCell(colIndex++).SetCellValue(chall?.Score ?? 0);
             }
 
             rowIndex++;
         }
     }
+
+    const string Empty = "<empty>";
+    const string Split = " / ";
+
+    static string TakeIfNotEmpty(string? str) => string.IsNullOrWhiteSpace(str) ? Empty : str;
 }

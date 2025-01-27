@@ -1,20 +1,23 @@
-import { Box, BoxProps, useMantineTheme } from '@mantine/core'
+import { Box, BoxProps, useMantineColorScheme } from '@mantine/core'
 import { Turnstile, TurnstileInstance } from '@marsidev/react-turnstile'
 import { forwardRef, useImperativeHandle, useRef } from 'react'
 import { GoogleReCaptchaProvider, useGoogleReCaptcha } from 'react-google-recaptcha-v3'
-import api, { CaptchaProvider } from '@Api'
+import { HashPow } from '@Components/HashPow'
+import { useCaptchaConfig } from '@Hooks/useConfig'
+import { CaptchaProvider } from '@Api'
 
 interface CaptchaProps extends BoxProps {
   action: string
 }
 
-interface CaptchaResult {
+export interface CaptchaResult {
   valid: boolean
   token?: string | null
 }
 
 export interface CaptchaInstance {
   getToken: () => Promise<CaptchaResult>
+  cleanUp?: (success?: boolean) => void
 }
 
 export const useCaptchaRef = () => {
@@ -25,7 +28,11 @@ export const useCaptchaRef = () => {
     return res ?? { valid: false }
   }
 
-  return { captchaRef, getToken } as const
+  const cleanUp = (success?: boolean) => {
+    captchaRef.current?.cleanUp?.(success)
+  }
+
+  return { captchaRef, getToken, cleanUp } as const
 }
 
 const ReCaptchaBox = forwardRef<CaptchaInstance, CaptchaProps>((props, ref) => {
@@ -50,22 +57,19 @@ const ReCaptchaBox = forwardRef<CaptchaInstance, CaptchaProps>((props, ref) => {
   return <Box {...others} />
 })
 
-const Captcha = forwardRef<CaptchaInstance, CaptchaProps>((props, ref) => {
+export const Captcha = forwardRef<CaptchaInstance, CaptchaProps>((props, ref) => {
   const { action, ...others } = props
-  const theme = useMantineTheme()
 
-  const { data: info, error } = api.info.useInfoGetClientCaptchaInfo({
-    refreshInterval: 0,
-    revalidateOnFocus: false,
-    revalidateOnReconnect: false,
-    refreshWhenHidden: false,
-    shouldRetryOnError: false,
-    refreshWhenOffline: false,
-  })
-
+  const { info, error } = useCaptchaConfig()
+  const { colorScheme } = useMantineColorScheme()
   const type = info?.type ?? CaptchaProvider.None
+
+  const backendRef = useRef<CaptchaInstance>(null)
+
+  // warp it into CaptchaInstance if necessary in the future
   const turnstileRef = useRef<TurnstileInstance>(null)
-  const reCaptchaRef = useRef<CaptchaInstance>(null)
+
+  const nonce = document.getElementById('nonce-container')?.getAttribute('data-nonce') ?? undefined
 
   useImperativeHandle(
     ref,
@@ -75,21 +79,34 @@ const Captcha = forwardRef<CaptchaInstance, CaptchaProps>((props, ref) => {
           return { valid: false }
         }
 
+        if (type === CaptchaProvider.HashPow) {
+          return backendRef.current?.getToken() ?? { valid: false }
+        }
+
+        // following providers need siteKey
         if (!info?.siteKey || type === CaptchaProvider.None) {
           return { valid: true }
         }
 
         if (type === CaptchaProvider.GoogleRecaptcha) {
-          const res = await reCaptchaRef.current?.getToken()
-          return res ?? { valid: false }
+          return backendRef.current?.getToken() ?? { valid: false }
         }
 
         const token = turnstileRef.current?.getResponse()
         return { valid: !!token, token }
       },
+      cleanUp: (success?: boolean) => {
+        if (type === CaptchaProvider.HashPow) {
+          backendRef.current?.cleanUp?.(success)
+        }
+      },
     }),
     [error, info, type]
   )
+
+  if (type === CaptchaProvider.HashPow) {
+    return <HashPow ref={backendRef} />
+  }
 
   if (error || !info?.siteKey || type === CaptchaProvider.None) {
     return <Box {...others} />
@@ -99,13 +116,16 @@ const Captcha = forwardRef<CaptchaInstance, CaptchaProps>((props, ref) => {
     return (
       <GoogleReCaptchaProvider
         reCaptchaKey={info.siteKey}
+        scriptProps={{
+          nonce,
+        }}
         container={{
           parameters: {
-            theme: theme.colorScheme,
+            theme: colorScheme == 'auto' ? undefined : colorScheme,
           },
         }}
       >
-        <ReCaptchaBox ref={reCaptchaRef} action={action} {...others} />
+        <ReCaptchaBox ref={backendRef} action={action} {...others} />
       </GoogleReCaptchaProvider>
     )
   }
@@ -116,12 +136,13 @@ const Captcha = forwardRef<CaptchaInstance, CaptchaProps>((props, ref) => {
         ref={turnstileRef}
         siteKey={info.siteKey}
         options={{
-          theme: theme.colorScheme,
+          theme: colorScheme,
           action,
+        }}
+        scriptOptions={{
+          nonce,
         }}
       />
     </Box>
   )
 })
-
-export default Captcha

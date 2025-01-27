@@ -15,6 +15,8 @@ import {
   Text,
   TextInput,
   Title,
+  alpha,
+  useMantineColorScheme,
   useMantineTheme,
 } from '@mantine/core'
 import { useModals } from '@mantine/modals'
@@ -23,16 +25,18 @@ import { mdiCheck, mdiPuzzleEditOutline } from '@mdi/js'
 import { Icon } from '@mdi/react'
 import { FC, useEffect, useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
-import { useNavigate, useParams } from 'react-router-dom'
-import AttachmentRemoteEditModal from '@Components/admin/AttachmentRemoteEditModal'
-import AttachmentUploadModal from '@Components/admin/AttachmentUploadModal'
-import FlagCreateModal from '@Components/admin/FlagCreateModal'
-import FlagEditPanel from '@Components/admin/FlagEditPanel'
-import WithGameEditTab from '@Components/admin/WithGameEditTab'
+import { Link, useParams } from 'react-router'
+import { AttachmentRemoteEditModal } from '@Components/admin/AttachmentRemoteEditModal'
+import { AttachmentUploadModal } from '@Components/admin/AttachmentUploadModal'
+import { FlagCreateModal } from '@Components/admin/FlagCreateModal'
+import { FlagEditPanel } from '@Components/admin/FlagEditPanel'
+import { WithChallengeEdit } from '@Components/admin/WithChallengeEdit'
 import { showErrorNotification } from '@Utils/ApiHelper'
-import { useUploadStyles } from '@Utils/ThemeOverride'
-import { useEditChallenge } from '@Utils/useEdit'
+import { useDisplayInputStyles } from '@Utils/ThemeOverride'
+import { useEditChallenge } from '@Hooks/useEdit'
 import api, { ChallengeType, FileType, FlagInfoModel } from '@Api'
+import misc from '@Styles/Misc.module.css'
+import uploadClasses from '@Styles/Upload.module.css'
 
 interface FlagEditProps {
   onDelete: (flag: FlagInfoModel) => void
@@ -51,6 +55,7 @@ const OneAttachmentWithFlags: FC<FlagEditProps> = ({ onDelete }) => {
   const [flagTemplate, setFlagTemplate] = useState(challenge?.flagTemplate ?? '')
 
   const modals = useModals()
+  const { colorScheme } = useMantineColorScheme()
   const { t } = useTranslation()
 
   useEffect(() => {
@@ -61,30 +66,31 @@ const OneAttachmentWithFlags: FC<FlagEditProps> = ({ onDelete }) => {
     }
   }, [challenge])
 
-  const onConfirmClear = () => {
+  const onConfirmClear = async () => {
     setDisabled(true)
-    api.edit
-      .editUpdateAttachment(numId, numCId, { attachmentType: FileType.None })
-      .then(() => {
-        showNotification({
-          color: 'teal',
-          message: t('admin.notification.games.challenges.attachment.updated'),
-          icon: <Icon path={mdiCheck} size={1} />,
+
+    try {
+      await api.edit.editUpdateAttachment(numId, numCId, { attachmentType: FileType.None })
+      showNotification({
+        color: 'teal',
+        message: t('admin.notification.games.challenges.attachment.updated'),
+        icon: <Icon path={mdiCheck} size={1} />,
+      })
+      setType(FileType.None)
+      if (challenge) {
+        mutate({
+          ...challenge,
+          attachment: null,
         })
-        setType(FileType.None)
-        challenge &&
-          mutate({
-            ...challenge,
-            attachment: null,
-          })
-      })
-      .catch((err) => showErrorNotification(err, t))
-      .finally(() => {
-        setDisabled(false)
-      })
+      }
+    } catch (e) {
+      showErrorNotification(e, t)
+    } finally {
+      setDisabled(false)
+    }
   }
 
-  const { classes, theme } = useUploadStyles()
+  const theme = useMantineTheme()
   const [progress, setProgress] = useState(0)
   const [flagCreateModalOpen, setFlagCreateModalOpen] = useState(false)
   const FileTypeDesrcMap = new Map<FileType, string>([
@@ -93,12 +99,14 @@ const OneAttachmentWithFlags: FC<FlagEditProps> = ({ onDelete }) => {
     [FileType.Local, t('challenge.file_type.local')],
   ])
 
-  const onUpload = (file: File) => {
+  const onUpload = async (file: File | null) => {
+    if (!file) return
+
     setProgress(0)
     setDisabled(true)
 
-    api.assets
-      .assetsUpload(
+    try {
+      const res = await api.assets.assetsUpload(
         {
           files: [file],
         },
@@ -109,85 +117,80 @@ const OneAttachmentWithFlags: FC<FlagEditProps> = ({ onDelete }) => {
           },
         }
       )
-      .then((data) => {
-        const file = data.data[0]
-        setProgress(95)
-        if (file) {
-          api.edit
-            .editUpdateAttachment(numId, numCId, {
-              attachmentType: FileType.Local,
-              fileHash: file.hash,
-            })
-            .then(() => {
-              setProgress(0)
-              setDisabled(false)
-              mutate()
-              showNotification({
-                color: 'teal',
-                message: t('admin.notification.games.challenges.attachment.updated'),
-                icon: <Icon path={mdiCheck} size={1} />,
-              })
-            })
-            .catch((err) => showErrorNotification(err, t))
-            .finally(() => {
-              setDisabled(false)
-            })
-        }
-      })
-      .catch((err) => showErrorNotification(err, t))
-      .finally(() => {
+      const remoteFile = res.data[0]
+      setProgress(95)
+      if (remoteFile) {
+        await api.edit.editUpdateAttachment(numId, numCId, {
+          attachmentType: FileType.Local,
+          fileHash: remoteFile.hash,
+        })
+        setProgress(0)
         setDisabled(false)
-      })
-  }
-
-  const onRemote = () => {
-    if (!remoteUrl.startsWith('http')) return
-    setDisabled(true)
-    api.edit
-      .editUpdateAttachment(numId, numCId, {
-        attachmentType: FileType.Remote,
-        remoteUrl: remoteUrl,
-      })
-      .then(() => {
+        mutate()
         showNotification({
           color: 'teal',
           message: t('admin.notification.games.challenges.attachment.updated'),
           icon: <Icon path={mdiCheck} size={1} />,
         })
-      })
-      .catch((err) => showErrorNotification(err, t))
-      .finally(() => {
-        setDisabled(false)
-      })
+      }
+    } catch (err) {
+      showErrorNotification(err, t)
+    } finally {
+      setDisabled(false)
+    }
   }
 
-  const onChangeFlagTemplate = () => {
-    if (flagTemplate === challenge?.flagTemplate) return
-
+  const onRemote = async () => {
+    if (!remoteUrl.startsWith('http')) return
     setDisabled(true)
-    api.edit
-      // allow empty flag template to be set (but not null or undefined)
-      .editUpdateGameChallenge(numId, numCId, { flagTemplate })
-      .then(() => {
-        showNotification({
-          color: 'teal',
-          message: t('admin.notification.games.challenges.flag_template.updated'),
-          icon: <Icon path={mdiCheck} size={1} />,
-        })
-        challenge && mutate({ ...challenge, flagTemplate: flagTemplate })
+
+    try {
+      await api.edit.editUpdateAttachment(numId, numCId, {
+        attachmentType: FileType.Remote,
+        remoteUrl: remoteUrl,
       })
-      .catch((e) => showErrorNotification(e, t))
-      .finally(() => {
-        setDisabled(false)
+      showNotification({
+        color: 'teal',
+        message: t('admin.notification.games.challenges.attachment.updated'),
+        icon: <Icon path={mdiCheck} size={1} />,
       })
+    } catch (e) {
+      showErrorNotification(e, t)
+    } finally {
+      setDisabled(false)
+    }
   }
 
-  const will_generate =
-    ' ' + t('admin.content.games.challenges.flag.instructions.will_generate') + ' '
+  const onChangeFlagTemplate = async () => {
+    if (flagTemplate === challenge?.flagTemplate) return
+    setDisabled(true)
+
+    try {
+      // allow empty flag template to be set (but not null or undefined)
+      await api.edit.editUpdateGameChallenge(numId, numCId, { flagTemplate })
+      showNotification({
+        color: 'teal',
+        message: t('admin.notification.games.challenges.flag_template.updated'),
+        icon: <Icon path={mdiCheck} size={1} />,
+      })
+      if (challenge) {
+        mutate({
+          ...challenge,
+          flagTemplate,
+        })
+      }
+    } catch (e) {
+      showErrorNotification(e, t)
+    } finally {
+      setDisabled(false)
+    }
+  }
+
+  const willGenerate = ' ' + t('admin.content.games.challenges.flag.instructions.will_generate') + ' '
 
   return (
     <Stack>
-      <Group position="apart">
+      <Group justify="space-between">
         <Title order={2}>{t('admin.content.games.challenges.attachment.title')}</Title>
         {type !== FileType.Remote ? (
           <FileButton onChange={onUpload}>
@@ -195,13 +198,13 @@ const OneAttachmentWithFlags: FC<FlagEditProps> = ({ onDelete }) => {
               <Button
                 {...props}
                 fullWidth
-                className={classes.uploadButton}
+                className={uploadClasses.button}
                 disabled={type !== FileType.Local}
                 w="122px"
                 mt="24px"
                 color={progress !== 0 ? 'cyan' : theme.primaryColor}
               >
-                <div className={classes.uploadLabel}>
+                <div className={uploadClasses.label}>
                   {progress !== 0
                     ? t('admin.button.challenges.attachment.uploading')
                     : t('admin.button.challenges.attachment.upload')}
@@ -209,8 +212,8 @@ const OneAttachmentWithFlags: FC<FlagEditProps> = ({ onDelete }) => {
                 {progress !== 0 && (
                   <Progress
                     value={progress}
-                    className={classes.uploadProgress}
-                    color={theme.fn.rgba(theme.colors[theme.primaryColor][2], 0.35)}
+                    className={uploadClasses.progress}
+                    color={alpha(theme.colors[theme.primaryColor][2], 0.35)}
                     radius="sm"
                   />
                 )}
@@ -224,7 +227,7 @@ const OneAttachmentWithFlags: FC<FlagEditProps> = ({ onDelete }) => {
         )}
       </Group>
       <Divider />
-      <Group position="apart">
+      <Group justify="space-between" wrap="nowrap">
         <Input.Wrapper label={t('admin.content.games.challenges.attachment.type')} required>
           <Chip.Group
             value={type}
@@ -232,11 +235,7 @@ const OneAttachmentWithFlags: FC<FlagEditProps> = ({ onDelete }) => {
               if (e === FileType.None) {
                 modals.openConfirmModal({
                   title: t('admin.content.games.challenges.attachment.clear.title'),
-                  children: (
-                    <Text size="sm">
-                      {t('admin.content.games.challenges.attachment.clear.description')}
-                    </Text>
-                  ),
+                  children: <Text size="sm">{t('admin.content.games.challenges.attachment.clear.description')}</Text>,
                   onConfirm: onConfirmClear,
                   confirmProps: { color: 'orange' },
                 })
@@ -245,7 +244,7 @@ const OneAttachmentWithFlags: FC<FlagEditProps> = ({ onDelete }) => {
               }
             }}
           >
-            <Group position="left" spacing="sm" h="2.25rem">
+            <Group justify="left" gap="sm" h="2.25rem" wrap="nowrap">
               {Object.entries(FileType).map((type) => (
                 <Chip key={type[0]} value={type[1]} size="sm">
                   {FileTypeDesrcMap.get(type[1])}
@@ -261,9 +260,8 @@ const OneAttachmentWithFlags: FC<FlagEditProps> = ({ onDelete }) => {
             disabled={disabled || type === FileType.None}
             value={challenge?.attachment?.url ?? ''}
             w="calc(100% - 400px)"
-            onClick={() =>
-              challenge?.attachment?.url && window.open(challenge?.attachment?.url, '_blank')
-            }
+            classNames={{ input: uploadClasses.hover }}
+            onClick={() => challenge?.attachment?.url && window.open(challenge?.attachment?.url, '_blank')}
           />
         ) : (
           <TextInput
@@ -271,11 +269,12 @@ const OneAttachmentWithFlags: FC<FlagEditProps> = ({ onDelete }) => {
             disabled={disabled}
             value={remoteUrl}
             w="calc(100% - 400px)"
+            classNames={{ input: uploadClasses.hover }}
             onChange={(e) => setRemoteUrl(e.target.value)}
           />
         )}
       </Group>
-      <Group position="apart" mt={20}>
+      <Group justify="space-between" mt={20}>
         <Title order={2}>{t('admin.content.games.challenges.flag.title')}</Title>
         {challenge?.type === ChallengeType.DynamicContainer ? (
           <Button disabled={disabled} onClick={onChangeFlagTemplate}>
@@ -296,16 +295,10 @@ const OneAttachmentWithFlags: FC<FlagEditProps> = ({ onDelete }) => {
             value={flagTemplate}
             placeholder="flag{[GUID]}"
             onChange={(e) => setFlagTemplate(e.target.value)}
-            styles={{
-              input: {
-                fontFamily: theme.fontFamilyMonospace,
-              },
-            }}
+            classNames={{ input: misc.ffmono }}
           />
-          <Stack spacing={6} pb={8}>
-            <Text size="sm">
-              {t('admin.content.games.challenges.flag.instructions.description')}
-            </Text>
+          <Stack gap={6} pb={8}>
+            <Text size="sm">{t('admin.content.games.challenges.flag.instructions.description')}</Text>
             <Text size="sm">
               <Trans i18nKey="admin.content.games.challenges.flag.instructions.guid">
                 _<Code>_</Code>_
@@ -327,51 +320,58 @@ const OneAttachmentWithFlags: FC<FlagEditProps> = ({ onDelete }) => {
                 <Code>_</Code>_
               </Trans>
             </Text>
+            <Text size="sm">
+              <Trans i18nKey="admin.content.games.challenges.flag.instructions.complex">
+                _<Code>_</Code>
+                <Code>_</Code>_
+              </Trans>
+            </Text>
             <Text size="sm" fw="bold">
               {t('admin.content.games.challenges.flag.instructions.example')}
             </Text>
             <List size="sm" spacing={6}>
               <List.Item>
                 {t('admin.content.games.challenges.flag.instructions.leave_empty')}
-                {will_generate}
+                {willGenerate}
                 <Code>{`flag{1bab71b8-117f-4dea-a047-340b72101d7b}`}</Code>
               </List.Item>
               <List.Item>
                 <Code>{`flag{hello world}`}</Code>
-                {will_generate}
+                {willGenerate}
                 <Code>{`flag{He1lo_w0r1d}`}</Code>
               </List.Item>
               <List.Item>
+                <Code>{`[CLEET]flag{hello sara}`}</Code>
+                {willGenerate}
+                <Code>{`flag{He1!o_$@rA}`}</Code>
+              </List.Item>
+              <List.Item>
                 <Code>{`flag{hello_world_[TEAM_HASH]}`}</Code>
-                {will_generate}
+                {willGenerate}
                 <Code>{`flag{hello_world_5418ce4d815c}`}</Code>
               </List.Item>
               <List.Item>
                 <Code>{`[LEET]flag{hello world [TEAM_HASH]}`}</Code>
-                {will_generate}
+                {willGenerate}
                 <Code>{`flag{He1lo_w0r1d_5418ce4d815c}`}</Code>
               </List.Item>
             </List>
           </Stack>
         </Stack>
       ) : (
-        <ScrollArea h="calc(100vh - 430px)" pos="relative">
+        <ScrollArea h="calc(100vh - 32rem)" pos="relative">
           {!challenge?.flags.length && (
             <>
-              <Overlay opacity={0.3} color={theme.colorScheme === 'dark' ? 'black' : 'white'} />
-              <Center h="calc(100vh - 430px)">
-                <Stack spacing={0}>
+              <Overlay opacity={0.3} color={colorScheme === 'dark' ? 'black' : 'white'} />
+              <Center h="calc(100vh - 32rem)">
+                <Stack gap={0}>
                   <Title order={2}>{t('admin.content.games.challenges.flag.empty.title')}</Title>
                   <Text>{t('admin.content.games.challenges.flag.empty.description')}</Text>
                 </Stack>
               </Center>
             </>
           )}
-          <FlagEditPanel
-            flags={challenge?.flags}
-            onDelete={onDelete}
-            unifiedAttachment={challenge?.attachment}
-          />
+          <FlagEditPanel flags={challenge?.flags} onDelete={onDelete} unifiedAttachment={challenge?.attachment} />
         </ScrollArea>
       )}
       <FlagCreateModal
@@ -386,21 +386,19 @@ const OneAttachmentWithFlags: FC<FlagEditProps> = ({ onDelete }) => {
 const FlagsWithAttachments: FC<FlagEditProps> = ({ onDelete }) => {
   const { id, chalId } = useParams()
   const [numId, numCId] = [parseInt(id ?? '-1'), parseInt(chalId ?? '-1')]
-
-  const theme = useMantineTheme()
-
   const { challenge } = useEditChallenge(numId, numCId)
 
   const [attachmentUploadModalOpened, setAttachmentUploadModalOpened] = useState(false)
   const [remoteAttachmentModalOpened, setRemoteAttachmentModalOpened] = useState(false)
 
+  const { colorScheme } = useMantineColorScheme()
   const { t } = useTranslation()
 
   return (
     <Stack>
-      <Group position="apart" mt={20}>
+      <Group justify="space-between" mt={20}>
         <Title order={2}>{t('admin.content.games.challenges.flag.title')}</Title>
-        <Group position="right">
+        <Group justify="right">
           <Button onClick={() => setRemoteAttachmentModalOpened(true)}>
             {t('admin.button.challenges.flag.add.remote')}
           </Button>
@@ -410,12 +408,12 @@ const FlagsWithAttachments: FC<FlagEditProps> = ({ onDelete }) => {
         </Group>
       </Group>
       <Divider />
-      <ScrollArea h="calc(100vh - 250px)" pos="relative">
+      <ScrollArea h="calc(100vh - 25rem)" pos="relative">
         {!challenge?.flags.length && (
           <>
-            <Overlay opacity={0.3} color={theme.colorScheme === 'dark' ? 'black' : 'white'} />
-            <Center h="calc(100vh - 250px)">
-              <Stack spacing={0}>
+            <Overlay opacity={0.3} color={colorScheme === 'dark' ? 'black' : 'white'} />
+            <Center h="calc(100vh - 25rem)">
+              <Stack gap={0}>
                 <Title order={2}>{t('admin.content.games.challenges.flag.empty.title')}</Title>
                 <Text>{t('admin.content.games.challenges.flag.empty.description')}</Text>
               </Stack>
@@ -441,13 +439,10 @@ const FlagsWithAttachments: FC<FlagEditProps> = ({ onDelete }) => {
 }
 
 const GameChallengeEdit: FC = () => {
-  const navigate = useNavigate()
   const { id, chalId } = useParams()
   const [numId, numCId] = [parseInt(id ?? '-1'), parseInt(chalId ?? '-1')]
-
-  const theme = useMantineTheme()
   const modals = useModals()
-
+  const { classes } = useDisplayInputStyles({ fw: 'bold', ff: 'monospace' })
   const { challenge, mutate } = useEditChallenge(numId, numCId)
 
   const { t } = useTranslation()
@@ -459,7 +454,7 @@ const GameChallengeEdit: FC = () => {
       children: (
         <Stack>
           <Text>{t('admin.content.games.challenges.flag.delete')}</Text>
-          <Text ff={theme.fontFamilyMonospace}>{flag.flag}</Text>
+          <Input variant="unstyled" value={flag.flag} w="100%" size="md" readOnly classNames={classes} />
         </Stack>
       ),
       onConfirm: () => flag.id && onConfirmDeleteFlag(flag.id),
@@ -467,38 +462,40 @@ const GameChallengeEdit: FC = () => {
     })
   }
 
-  const onConfirmDeleteFlag = (id: number) => {
-    api.edit
-      .editRemoveFlag(numId, numCId, id)
-      .then(() => {
-        showNotification({
-          color: 'teal',
-          message: t('admin.notification.games.challenges.flag.deleted'),
-          icon: <Icon path={mdiCheck} size={1} />,
-        })
-        challenge &&
-          mutate({
-            ...challenge,
-            flags: challenge.flags.filter((f) => f.id !== id),
-          })
+  const onConfirmDeleteFlag = async (id: number) => {
+    try {
+      await api.edit.editRemoveFlag(numId, numCId, id)
+      showNotification({
+        color: 'teal',
+        message: t('admin.notification.games.challenges.flag.deleted'),
+        icon: <Icon path={mdiCheck} size={1} />,
       })
-      .catch((e) => showErrorNotification(e, t))
+      if (challenge) {
+        mutate({
+          ...challenge,
+          flags: challenge.flags.filter((f) => f.id !== id),
+        })
+      }
+    } catch (e) {
+      showErrorNotification(e, t)
+    }
   }
 
   return (
-    <WithGameEditTab
+    <WithChallengeEdit
       isLoading={!challenge}
-      headProps={{ position: 'apart' }}
+      headProps={{ justify: 'apart' }}
       backUrl={`/admin/games/${id}/challenges`}
       head={
         <>
-          <Title lineClamp={1} style={{ wordBreak: 'break-all' }}>
+          <Title lineClamp={1} className={misc.wordBreakAll}>
             # {challenge?.title}
           </Title>
-          <Group noWrap position="right">
+          <Group wrap="nowrap" justify="right">
             <Button
-              leftIcon={<Icon path={mdiPuzzleEditOutline} size={1} />}
-              onClick={() => navigate(`/admin/games/${id}/challenges/${numCId}`)}
+              component={Link}
+              leftSection={<Icon path={mdiPuzzleEditOutline} size={1} />}
+              to={`/admin/games/${id}/challenges/${numCId}`}
             >
               {t('admin.button.challenges.edit')}
             </Button>
@@ -511,7 +508,7 @@ const GameChallengeEdit: FC = () => {
       ) : (
         <OneAttachmentWithFlags onDelete={onDeleteFlag} />
       )}
-    </WithGameEditTab>
+    </WithChallengeEdit>
   )
 }
 

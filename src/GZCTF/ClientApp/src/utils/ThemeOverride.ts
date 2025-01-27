@@ -1,7 +1,24 @@
-import { createStyles, keyframes, MantineThemeOverride, rem, useMantineTheme } from '@mantine/core'
-import { useMediaQuery } from '@mantine/hooks'
+import { generateColors } from '@mantine/colors-generator'
+import {
+  ActionIcon,
+  Avatar,
+  Badge,
+  Loader,
+  MantineThemeOverride,
+  Menu,
+  Modal,
+  Popover,
+  Switch,
+  Tabs,
+  createTheme,
+  useMantineTheme,
+} from '@mantine/core'
+import { createStyles } from '@mantine/emotion'
+import { useLocalStorage, useMediaQuery } from '@mantine/hooks'
+import { useEffect, useState } from 'react'
+import { useConfig } from '@Hooks/useConfig'
 
-export const ThemeOverride: MantineThemeOverride = {
+const CustomTheme: MantineThemeOverride = {
   colors: {
     gray: [
       '#EBEBEB',
@@ -13,17 +30,19 @@ export const ThemeOverride: MantineThemeOverride = {
       '#414141',
       '#252525',
       '#202020',
+      '#141414',
     ],
     brand: [
-      '#d9b4ef',
-      '#d1a4ec',
-      '#ca95e9',
-      '#c286e5',
-      '#bb77e2',
-      '#b368df',
-      '#a15ec9',
-      '#8f53b2',
-      '#7d499c',
+      '#E1FFF9',
+      '#CFFCF1',
+      '#A2F7E2',
+      '#72F1D2',
+      '#4BEDC4',
+      '#2AE5B5',
+      '#18CB9E',
+      '#00AA85',
+      '#007F6E',
+      '#005A4C',
     ],
     alert: [
       '#FFB4B4',
@@ -37,7 +56,7 @@ export const ThemeOverride: MantineThemeOverride = {
       '#FC1414',
       '#FC0000',
     ],
-    white: [
+    light: [
       '#FFFFFF',
       '#F8F8F8',
       '#EFEFEF',
@@ -64,14 +83,32 @@ export const ThemeOverride: MantineThemeOverride = {
   },
   primaryColor: 'brand',
   fontFamily:
-    "'IBM Plex Sans', -apple-system, BlinkMacSystemFont, Helvetica Neue, PingFang SC, Microsoft YaHei, Source Han Sans SC, Noto Sans CJK SC, sans-serif",
-  fontFamilyMonospace: "'JetBrains Mono', monospace",
+    'IBM Plex Sans, -apple-system, BlinkMacSystemFont, Helvetica Neue, PingFang SC, Microsoft YaHei, Source Han Sans SC, Noto Sans CJK SC, sans-serif',
+  fontFamilyMonospace:
+    'JetBrains Mono, ui-monospace, SFMono-Regular, Monaco, Consolas, Courier New, monospace, sans-serif',
   headings: {
-    fontFamily: "'IBM Plex Sans', sans-serif",
+    fontFamily: 'IBM Plex Sans, sans-serif',
   },
-  loader: 'bars',
+  breakpoints: {
+    xs: '30em',
+    sm: '48em',
+    md: '64em',
+    lg: '74em',
+    xl: '90em',
+    w18: '1800px',
+    w24: '2400px',
+    w30: '3000px',
+    w36: '3600px',
+    w42: '4200px',
+    w48: '4800px',
+  },
   components: {
-    Switch: {
+    Loader: Loader.extend({
+      defaultProps: {
+        type: 'bars',
+      },
+    }),
+    Switch: Switch.extend({
       styles: {
         body: {
           alignItems: 'center',
@@ -80,8 +117,8 @@ export const ThemeOverride: MantineThemeOverride = {
           display: 'flex',
         },
       },
-    },
-    Modal: {
+    }),
+    Modal: Modal.extend({
       defaultProps: {
         centered: true,
         styles: {
@@ -90,268 +127,170 @@ export const ThemeOverride: MantineThemeOverride = {
           },
         },
       },
-    },
-    Popover: {
+    }),
+    Popover: Popover.extend({
       defaultProps: {
         withinPortal: true,
       },
-    },
-    Notification: {
+    }),
+    ActionIcon: ActionIcon.extend({
       defaultProps: {
-        radius: 'md',
-        withBorder: true,
-        withCloseButton: false,
+        variant: 'transparent',
       },
-    },
+    }),
+    Badge: Badge.extend({
+      defaultProps: {
+        variant: 'outline',
+      },
+    }),
+    Tabs: Tabs.extend({
+      styles: {
+        tab: {
+          padding: 'var(--mantine-spacing-xs)',
+          fontWeight: 500,
+        },
+      },
+    }),
+    Avatar: Avatar.extend({
+      defaultProps: {
+        color: 'brand',
+      },
+    }),
+    Menu: Menu.extend({
+      styles: {
+        item: {
+          fontWeight: 500,
+        },
+      },
+    }),
   },
 }
 
-export const useTableStyles = createStyles((theme) => ({
-  mono: {
-    fontFamily: theme.fontFamilyMonospace,
-  },
-  fade: {
-    animation: `${keyframes`0% {
-                              opacity: 0;
-                            }
-                              100% {
-                                opacity: 1;
-                              }`} 0.5s linear`,
-  },
-  table: {
-    '& thead tr th': {
-      position: 'sticky',
-      top: 0,
-      zIndex: 195,
-      backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.white,
-    },
+export enum ColorProvider {
+  Managed = 'Managed',
+  Default = 'Default',
+  Custom = 'Custom',
+}
 
-    '& tbody tr td': {
-      whiteSpace: 'nowrap',
-    },
-  },
-}))
+export interface CustomColor {
+  provider: ColorProvider
+  color: string
+}
 
-export const useTooltipStyles = createStyles((theme) => ({
-  tooltip: {
-    fontWeight: 500,
-    background:
-      theme.colorScheme === 'dark'
-        ? theme.fn.darken(theme.colors.gray[6], 0.4)
-        : theme.colors.white[0],
-    boxShadow: theme.shadows.md,
-    color: theme.colorScheme === 'dark' ? theme.colors.white[2] : theme.colors.gray[7],
-  },
-  arrow: {
-    boxShadow: theme.shadows.md,
-  },
-}))
+export const useCustomColor = () => {
+  const [customColor, setCustomColorInner] = useLocalStorage<CustomColor>({
+    key: 'custom-theme',
+    defaultValue: { provider: ColorProvider.Managed, color: '' } as CustomColor,
+    getInitialValueInEffect: false,
+    serialize: (value: CustomColor) => {
+      if (value.provider === ColorProvider.Custom && /^#[0-9A-F]{6}$/i.test(value.color)) {
+        return value.color
+      } else if (value.provider === ColorProvider.Managed) {
+        return ''
+      } else {
+        return 'brand'
+      }
+    },
+    deserialize: (value?: string) => {
+      if (typeof value !== 'string') return { provider: ColorProvider.Managed, color: '' }
+
+      if (value === 'brand') {
+        return { provider: ColorProvider.Default, color: '' }
+      } else if (/^#[0-9A-F]{6}$/i.test(value)) {
+        return { provider: ColorProvider.Custom, color: value }
+      } else {
+        return { provider: ColorProvider.Managed, color: '' }
+      }
+    },
+  })
+
+  const setCustomColor = (color: CustomColor) => {
+    // validate custom color, do not save invalid values
+    if (color.provider === ColorProvider.Custom && !/^#[0-9A-F]{6}$/i.test(color.color)) return
+
+    setCustomColorInner(color)
+  }
+
+  // color: null for use platform color, 'brand' for default theme
+  //        or hex color string for custom color
+  return { customColor, setCustomColor }
+}
+
+export const useCustomTheme = () => {
+  const { config } = useConfig()
+  const { customColor } = useCustomColor()
+
+  const resolveManaged = (color: string | null | undefined) => {
+    return color && /^#[0-9A-F]{6}$/i.test(color) ? color : null
+  }
+
+  const [theme, setTheme] = useState<MantineThemeOverride>(createTheme(CustomTheme))
+
+  useEffect(() => {
+    if (customColor.provider === ColorProvider.Default) {
+      setTheme(CustomTheme)
+      return
+    }
+
+    const resolvedColor =
+      customColor.provider === ColorProvider.Custom
+        ? customColor.color
+        : customColor.provider === ColorProvider.Managed
+          ? resolveManaged(config.customTheme)
+          : null
+
+    if (resolvedColor) {
+      setTheme({
+        ...CustomTheme,
+        colors: {
+          ...CustomTheme.colors,
+          custom: generateColors(resolvedColor),
+        },
+        components: {
+          ...CustomTheme.components,
+          Avatar: Avatar.extend({
+            defaultProps: {
+              color: 'custom',
+            },
+          }),
+        },
+        primaryColor: 'custom',
+      })
+    } else {
+      setTheme(CustomTheme)
+    }
+  }, [customColor, config.customTheme])
+
+  return { theme }
+}
 
 export const useIsMobile = (limit?: number) => {
   const theme = useMantineTheme()
-  const isMobile = useMediaQuery(`(max-width: ${limit ? `${limit}px` : theme.breakpoints.xs})`)
+  const isMobile = useMediaQuery(`(max-width: ${limit ? `${limit}px` : theme.breakpoints.sm})`)
   return isMobile
 }
 
-export const ACCEPT_IMAGE_MIME_TYPE = [
-  'image/png',
-  'image/gif',
-  'image/jpeg',
-  'image/gif',
-  'image/webp',
-  'image/bmp',
-  'image/tiff',
-]
-
-interface FixedButtonProps {
-  right?: string
-  bottom?: string
+interface UseDisplayInputStylesProps {
+  ff?: 'monospace' | 'text'
+  fw?: React.CSSProperties['fontWeight']
+  lh?: React.CSSProperties['lineHeight']
+  cs?: React.CSSProperties['cursor']
 }
 
-export const useFixedButtonStyles = createStyles((theme, { right, bottom }: FixedButtonProps) => ({
-  fixedButton: {
-    position: 'fixed',
-    bottom,
-    right,
-    boxShadow:
-      '0 1px 3px rgb(0 0 0 / 5%), rgb(0 0 0 / 5%) 0px 28px 23px -7px, rgb(0 0 0 / 4%) 0px 12px 12px -7px',
-    zIndex: 1000,
-
-    '@media print': {
-      display: 'none',
+export const useDisplayInputStyles = createStyles(
+  (theme, { fw = 'normal', lh = '1.5rem', ff = 'text', cs = 'auto' }: UseDisplayInputStylesProps) => ({
+    wrapper: {
+      width: '100%',
     },
-  },
-}))
-
-export const useBannerStyles = createStyles((theme) => ({
-  root: {
-    position: 'relative',
-    display: 'flex',
-    background: theme.colorScheme === 'dark' ? ` rgba(0,0,0,0.2)` : theme.white,
-    justifyContent: 'center',
-    backgroundSize: 'cover',
-    backgroundPosition: 'center center',
-    padding: `calc(${theme.spacing.xl} * 3) 0`,
-
-    [theme.fn.smallerThan('sm')]: {
-      justifyContent: 'start',
+    input: {
+      fontWeight: fw,
+      fontFamily: ff === 'text' ? theme.fontFamily : theme.fontFamilyMonospace,
+      height: lh,
+      lineHeight: lh,
+      cursor: cs,
+      userSelect: 'none',
+      minHeight: '1rem',
+      maxHeight: '2rem',
     },
-
-    [theme.fn.smallerThan('md')]: {
-      padding: `calc(${theme.spacing.xl} * 1.5) 1rem`,
-    },
-  },
-  container: {
-    position: 'relative',
-    maxWidth: '960px',
-    width: '100%',
-    zIndex: 1,
-
-    [theme.fn.smallerThan('md')]: {
-      padding: `${theme.spacing.md} calc(${theme.spacing.md} * 2)`,
-    },
-  },
-  flexGrowAtSm: {
-    flexGrow: 0,
-
-    [theme.fn.smallerThan('sm')]: {
-      flexGrow: 1,
-    },
-  },
-  description: {
-    color: theme.white,
-    maxWidth: 600,
-  },
-  title: {
-    color: theme.colorScheme === 'dark' ? theme.colors.white[0] : theme.colors.gray[6],
-    fontSize: `calc(${theme.fontSizes.xl} * 2.2)`,
-    fontWeight: 900,
-    lineHeight: 1.1,
-
-    [theme.fn.smallerThan('md')]: {
-      maxWidth: '100%',
-      fontSize: `calc(${theme.fontSizes.xl} * 1.8)`,
-      lineHeight: 1.15,
-    },
-  },
-  content: {
-    paddingTop: '1rem',
-  },
-  banner: {
-    maxWidth: '50%',
-    height: '100%',
-    width: '40vw',
-
-    [theme.fn.smallerThan('sm')]: {
-      display: 'none',
-    },
-  },
-  date: {
-    color: theme.colorScheme === 'dark' ? theme.colors.white[0] : theme.colors.gray[6],
-  },
-}))
-
-export const useUploadStyles = createStyles(() => ({
-  uploadButton: {
-    position: 'relative',
-    transition: 'background-color 150ms ease',
-  },
-
-  uploadProgress: {
-    position: 'absolute',
-    bottom: -1,
-    right: -1,
-    left: -1,
-    top: -1,
-    height: 'auto',
-    backgroundColor: 'transparent',
-    zIndex: 0,
-  },
-
-  uploadLabel: {
-    position: 'relative',
-    zIndex: 1,
-  },
-}))
-
-export const useAccordionStyles = createStyles((theme) => ({
-  root: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-    borderRadius: theme.radius.sm,
-  },
-
-  item: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-    border: '1px solid rgba(0,0,0,0.2)',
-    position: 'relative',
-
-    '&[data-active]': {
-      backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.white,
-      boxShadow: theme.shadows.md,
-    },
-  },
-
-  label: {
-    padding: '0',
-  },
-
-  control: {
-    padding: '8px 4px',
-    ...theme.fn.hover({ background: 'transparent' }),
-  },
-}))
-
-const FOOTER_HEIGHT = rem(240)
-
-export const useFooterStyles = createStyles((theme) => ({
-  spacer: {
-    height: FOOTER_HEIGHT,
-  },
-
-  wrapper: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.white[2],
-    position: 'fixed',
-    zIndex: 5,
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: FOOTER_HEIGHT,
-    paddingRight: `calc(${theme.spacing.xl} * 3)`,
-    paddingLeft: `calc(var(--mantine-navbar-width) + ${theme.spacing.xl} * 3)`,
-
-    [theme.fn.smallerThan('md')]: {
-      padding: `calc(${theme.spacing.xl})`,
-    },
-  },
-}))
-
-export const useLogoStyles = createStyles((theme) => ({
-  title: {
-    color: theme.colorScheme === 'dark' ? theme.colors.white[0] : theme.colors.gray[6],
-  },
-  brand: {
-    color: theme.colors[theme.primaryColor][4],
-  },
-  bio: {
-    fontFamily: theme.fontFamilyMonospace,
-    fontWeight: 'bold',
-    fontSize: '1.5rem',
-    color: theme.colorScheme === 'dark' ? theme.colors.gray[2] : theme.colors.dark[4],
-  },
-  blink: {
-    animation: `${keyframes`0%, 100% {
-                              opacity: 0;
-                            }
-                              50% {
-                                opacity: 1;
-                              }`} 1s infinite steps(1,start)`,
-  },
-  watermark: {
-    position: 'absolute',
-    fontSize: '12rem',
-    fontWeight: 'bold',
-    opacity: 0.05,
-    transform: 'scale(1.5)',
-    userSelect: 'none',
-  },
-}))
+  })
+)

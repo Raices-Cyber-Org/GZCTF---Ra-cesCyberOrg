@@ -1,21 +1,23 @@
 ﻿using System.Threading.Channels;
-using GZCTF.Repositories;
+using GZCTF.Services.Cache.Handlers;
+using MemoryPack;
 using Microsoft.Extensions.Caching.Distributed;
 
 namespace GZCTF.Services.Cache;
 
 /// <summary>
-/// 缓存更新请求
+/// Cache update request
 /// </summary>
 public class CacheRequest(string key, DistributedCacheEntryOptions? options = null, params string[] @params)
 {
-    public string Key { get; set; } = key;
-    public string[] Params { get; set; } = @params;
-    public DistributedCacheEntryOptions? Options { get; set; } = options;
+    public DateTimeOffset Time { get; } = DateTimeOffset.Now;
+    public string Key { get; } = key;
+    public string[] Params { get; } = @params;
+    public DistributedCacheEntryOptions? Options { get; } = options;
 }
 
 /// <summary>
-/// 缓存请求处理接口
+/// Cache request handler
 /// </summary>
 public interface ICacheRequestHandler
 {
@@ -32,19 +34,20 @@ public class CacheMaker(
     readonly Dictionary<string, ICacheRequestHandler> _cacheHandlers = new();
     CancellationTokenSource TokenSource { get; set; } = new();
 
-    public Task StartAsync(CancellationToken token)
+    public async Task StartAsync(CancellationToken token)
     {
         TokenSource = new CancellationTokenSource();
 
         #region Add Handlers
 
         AddCacheRequestHandler<ScoreboardCacheHandler>(CacheKey.ScoreBoardBase);
+        AddCacheRequestHandler<RecentGamesCacheHandler>(CacheKey.RecentGames);
+        AddCacheRequestHandler<GameListCacheHandler>(CacheKey.GameList);
 
         #endregion
 
-        _ = Maker(TokenSource.Token);
-
-        return Task.CompletedTask;
+        await Task.Factory.StartNew(() => Maker(TokenSource.Token), token, TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
     }
 
     public Task StopAsync(CancellationToken token)
@@ -69,7 +72,7 @@ public class CacheMaker(
         {
             await foreach (CacheRequest item in channelReader.ReadAllAsync(token))
             {
-                if (!_cacheHandlers.ContainsKey(item.Key))
+                if (!_cacheHandlers.TryGetValue(item.Key, out ICacheRequestHandler? handler))
                 {
                     logger.SystemLog(
                         Program.StaticLocalizer[nameof(Resources.Program.Cache_NoMatchingRequest), item.Key],
@@ -78,7 +81,6 @@ public class CacheMaker(
                     continue;
                 }
 
-                ICacheRequestHandler handler = _cacheHandlers[item.Key];
                 var key = handler.CacheKey(item);
 
                 if (key is null)
@@ -94,19 +96,33 @@ public class CacheMaker(
 
                 if (await cache.GetAsync(updateLock, token) is not null)
                 {
-                    // only one GZCTF instance will never encounter this problem
+                    // only one GZCTF instance will never encounter this
                     logger.SystemLog(Program.StaticLocalizer[nameof(Resources.Program.Cache_InvalidUpdateRequest), key],
                         TaskStatus.Pending,
                         LogLevel.Debug);
                     continue;
                 }
 
+                var lastUpdateKey = CacheKey.LastUpdateTime(key);
+                var lastUpdateBytes = await cache.GetAsync(lastUpdateKey, token);
+                if (lastUpdateBytes is not null && lastUpdateBytes.Length > 0)
+                {
+                    var lastUpdate = MemoryPackSerializer.Deserialize<DateTimeOffset>(lastUpdateBytes);
+                    // if the cache is updated after the request, skip
+                    // this will de-bounced the slow cache update request
+                    if (lastUpdate > item.Time)
+                        continue;
+                }
+
+                lastUpdateBytes = MemoryPackSerializer.Serialize(DateTimeOffset.UtcNow);
+                await cache.SetAsync(lastUpdateKey, lastUpdateBytes, new(), token);
+
                 await using AsyncServiceScope scope = serviceScopeFactory.CreateAsyncScope();
 
                 try
                 {
                     await cache.SetAsync(updateLock, [],
-                        new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(60) },
+                        new DistributedCacheEntryOptions { SlidingExpiration = TimeSpan.FromMinutes(1) },
                         token);
 
                     var bytes = await handler.Handler(scope, item, token);
@@ -115,9 +131,10 @@ public class CacheMaker(
                     {
                         await cache.SetAsync(key, bytes, item.Options ?? new DistributedCacheEntryOptions(), token);
                         logger.SystemLog(
-                            Program.StaticLocalizer[nameof(Resources.Program.Cache_Updated), key, bytes.Length],
-                            TaskStatus.Success,
-                            LogLevel.Debug);
+                            Program.StaticLocalizer[
+                                nameof(Resources.Program.Cache_Updated),
+                                key, item.Time.ToString("HH:mm:ss.fff"), bytes.Length
+                            ], TaskStatus.Success, LogLevel.Debug);
                     }
                     else
                     {

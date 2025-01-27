@@ -10,6 +10,7 @@ import {
   Stack,
   Text,
   Title,
+  useMantineTheme,
 } from '@mantine/core'
 import { useScrollIntoView } from '@mantine/hooks'
 import { useModals } from '@mantine/modals'
@@ -18,17 +19,19 @@ import { mdiAlertCircle, mdiCheck, mdiFlagOutline, mdiTimerSand } from '@mdi/js'
 import { Icon } from '@mdi/react'
 import { FC, useEffect, useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
-import { Link, useNavigate, useParams } from 'react-router-dom'
-import CustomProgress from '@Components/CustomProgress'
-import GameJoinModal from '@Components/GameJoinModal'
-import MarkdownRender from '@Components/MarkdownRender'
-import WithNavBar from '@Components/WithNavbar'
+import { Link, useNavigate, useParams } from 'react-router'
+import { GameJoinModal } from '@Components/GameJoinModal'
+import { GameProgress } from '@Components/GameProgress'
+import { Markdown } from '@Components/MarkdownRenderer'
+import { WithNavBar } from '@Components/WithNavbar'
 import { showErrorNotification } from '@Utils/ApiHelper'
-import { useBannerStyles, useIsMobile } from '@Utils/ThemeOverride'
-import { getGameStatus, useGame } from '@Utils/useGame'
-import { usePageTitle } from '@Utils/usePageTitle'
-import { useTeams, useUser } from '@Utils/useUser'
+import { useLanguage } from '@Utils/I18n'
+import { useIsMobile } from '@Utils/ThemeOverride'
+import { getGameStatus, useGame } from '@Hooks/useGame'
+import { usePageTitle } from '@Hooks/usePageTitle'
+import { useTeams, useUser } from '@Hooks/useUser'
 import api, { GameJoinModel, ParticipationStatus } from '@Api'
+import classes from '@Styles/Banner.module.css'
 
 const GetAlert = (status: ParticipationStatus, team: string) => {
   const { t } = useTranslation()
@@ -83,9 +86,11 @@ const GameDetail: FC = () => {
 
   const { game, error, mutate, status } = useGame(numId)
 
-  const { classes, theme } = useBannerStyles()
+  const theme = useMantineTheme()
 
   const { startTime, endTime, finished, started, progress } = getGameStatus(game)
+
+  const { locale } = useLanguage()
 
   const { user } = useUser()
   const { teams } = useTeams()
@@ -102,13 +107,13 @@ const GameDetail: FC = () => {
       showErrorNotification(error, t)
       navigate('/games')
     }
-  }, [error])
+  }, [error, navigate])
 
   const { scrollIntoView, targetRef } = useScrollIntoView<HTMLDivElement>()
 
   const [joinModalOpen, setJoinModalOpen] = useState(false)
 
-  useEffect(() => scrollIntoView({ alignment: 'center' }), [])
+  useEffect(() => scrollIntoView({ alignment: 'center' }), [scrollIntoView])
 
   const GameActionMap = new Map([
     [ParticipationStatus.Pending, t('game.participation.actions.pending')],
@@ -157,14 +162,13 @@ const GameDetail: FC = () => {
     teams &&
     teams.length > 0
 
-  const teamRequire =
-    user && status === ParticipationStatus.Unsubmitted && !finished && teams && teams.length === 0
+  const teamRequire = user && status === ParticipationStatus.Unsubmitted && !finished && teams && teams.length === 0
 
   const onJoin = () =>
     modals.openConfirmModal({
       title: t('game.content.join.confirm'),
       children: (
-        <Stack spacing="xs">
+        <Stack gap="xs">
           <Text size="sm">{t('game.content.join.content.0')}</Text>
           <Text size="sm">
             <Trans i18nKey="game.content.join.content.1" />
@@ -175,33 +179,29 @@ const GameDetail: FC = () => {
         </Stack>
       ),
       onConfirm: () => setJoinModalOpen(true),
-      confirmProps: { color: 'brand' },
+      confirmProps: { color: theme.primaryColor },
     })
 
   const onLeave = () =>
     modals.openConfirmModal({
       title: t('game.content.leave.confirm'),
       children: (
-        <Stack spacing="xs">
+        <Stack gap="xs">
           <Text size="sm">{t('game.content.leave.content.0')}</Text>
           <Text size="sm">{t('game.content.leave.content.1')}</Text>
         </Stack>
       ),
       onConfirm: onSubmitLeave,
-      confirmProps: { color: 'brand' },
+      confirmProps: { color: theme.primaryColor },
     })
 
   const ControlButtons = (
     <>
       <Button disabled={!canSubmit} onClick={onJoin}>
-        {finished
-          ? t('game.button.finished')
-          : !user
-            ? t('game.button.login_required')
-            : GameActionMap.get(status)}
+        {finished ? t('game.button.finished') : !user ? t('game.button.login_required') : GameActionMap.get(status)}
       </Button>
       {started && (
-        <Button onClick={() => navigate(`/games/${numId}/scoreboard`)}>
+        <Button component={Link} to={`/games/${numId}/scoreboard`}>
           {t('game.button.scoreboard')}
         </Button>
       )}
@@ -210,28 +210,19 @@ const GameDetail: FC = () => {
           {t('game.button.leave')}
         </Button>
       )}
-      {status === ParticipationStatus.Accepted &&
-        started &&
-        !isMobile &&
-        (!finished || game?.practiceMode) && (
-          <Button onClick={() => navigate(`/games/${numId}/challenges`)}>
-            {t('game.button.challenges')}
-          </Button>
-        )}
+      {status === ParticipationStatus.Accepted && started && !isMobile && (!finished || game?.practiceMode) && (
+        <Button component={Link} to={`/games/${numId}/challenges`}>
+          {t('game.button.challenges')}
+        </Button>
+      )}
     </>
   )
 
   return (
     <WithNavBar width="100%" isLoading={!game} minWidth={0} withFooter>
       <div ref={targetRef} className={classes.root}>
-        <Group
-          noWrap
-          position="apart"
-          w="100%"
-          p={`0 ${theme.spacing.md}`}
-          className={classes.container}
-        >
-          <Stack spacing={6} className={classes.flexGrowAtSm}>
+        <Group wrap="nowrap" justify="space-between" w="100%" p={`0 ${theme.spacing.md}`} className={classes.container}>
+          <Stack gap={6} className={classes.flexGrowAtSm}>
             <Group>
               <Badge variant="outline">
                 {!game || game.limit === 0
@@ -242,47 +233,42 @@ const GameDetail: FC = () => {
               </Badge>
               {game?.hidden && <Badge variant="outline">{t('game.tag.hidden')}</Badge>}
             </Group>
-            <Stack spacing={2}>
+            <Stack gap={2}>
               <Title className={classes.title}>{game?.title}</Title>
               <Text size="sm" c="dimmed">
-                <Trans
-                  i18nKey="game.content.joined_status"
-                  values={{ count: game?.teamCount ?? 0 }}
-                />
+                <Trans i18nKey="game.content.joined_status" values={{ count: game?.teamCount ?? 0 }} />
               </Text>
             </Stack>
-            <Group position="apart">
-              <Stack spacing={0}>
+            <Group justify="space-between">
+              <Stack gap={0}>
                 <Text size="sm" className={classes.date}>
                   {t('game.content.start_time')}
                 </Text>
-                <Text size="sm" fw={700} className={classes.date}>
-                  {startTime.format('HH:mm:ss, MMMM DD, YYYY')}
+                <Text size="sm" fw="bold" className={classes.date}>
+                  {startTime.locale(locale).format('LLL')}
                 </Text>
               </Stack>
-              <Stack spacing={0}>
+              <Stack gap={0}>
                 <Text size="sm" className={classes.date}>
                   {t('game.content.end_time')}
                 </Text>
-                <Text size="sm" fw={700} className={classes.date}>
-                  {endTime.format('HH:mm:ss, MMMM DD, YYYY')}
+                <Text size="sm" fw="bold" className={classes.date}>
+                  {endTime.locale(locale).format('LLL')}
                 </Text>
               </Stack>
             </Group>
-            <CustomProgress percentage={progress} />
+            <GameProgress percentage={progress} />
             <Group>{ControlButtons}</Group>
           </Stack>
           <BackgroundImage className={classes.banner} src={game?.poster ?? ''} radius="sm">
             <Center h="100%">
-              {!game?.poster && (
-                <Icon path={mdiFlagOutline} size={4} color={theme.colors.gray[5]} />
-              )}
+              {!game?.poster && <Icon path={mdiFlagOutline} size={4} color={theme.colors.gray[5]} />}
             </Center>
           </BackgroundImage>
         </Group>
       </div>
       <Container className={classes.content}>
-        <Stack spacing="xs" pb={100}>
+        <Stack gap="xs" pb={100}>
           {GetAlert(status, game?.teamName ?? '')}
           {teamRequire && (
             <Alert
@@ -300,18 +286,14 @@ const GameDetail: FC = () => {
             </Alert>
           )}
           {status === ParticipationStatus.Accepted && !started && (
-            <Alert
-              color="teal"
-              icon={<Icon path={mdiCheck} />}
-              title={t('game.participation.alert.not_started.title')}
-            >
+            <Alert color="teal" icon={<Icon path={mdiCheck} />} title={t('game.participation.alert.not_started.title')}>
               {t('game.participation.alert.not_started.content', {
                 team: game?.teamName ?? '',
               })}
               {isMobile && t('game.participation.alert.not_started.mobile')}
             </Alert>
           )}
-          <MarkdownRender source={game?.content ?? ''} />
+          <Markdown source={game?.content ?? ''} />
         </Stack>
         <GameJoinModal
           title={t('game.content.join.title')}

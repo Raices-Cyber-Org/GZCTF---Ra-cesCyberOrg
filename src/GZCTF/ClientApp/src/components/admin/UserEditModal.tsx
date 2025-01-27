@@ -4,16 +4,14 @@ import {
   Center,
   Grid,
   Group,
-  Input,
   Modal,
   ModalProps,
-  SegmentedControl,
+  Radio,
   SimpleGrid,
   Stack,
   Text,
   Textarea,
   TextInput,
-  useMantineTheme,
 } from '@mantine/core'
 import { showNotification } from '@mantine/notifications'
 import { mdiCheck } from '@mdi/js'
@@ -22,12 +20,12 @@ import dayjs from 'dayjs'
 import { FC, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { showErrorNotification } from '@Utils/ApiHelper'
-import { useUser } from '@Utils/useUser'
+import { useUser } from '@Hooks/useUser'
 import api, { AdminUserInfoModel, Role, UserInfoModel } from '@Api'
 
 export const RoleColorMap = new Map<Role, string>([
   [Role.Admin, 'blue'],
-  [Role.User, 'brand'],
+  [Role.User, 'green'],
   [Role.Monitor, 'yellow'],
   [Role.Banned, 'red'],
 ])
@@ -37,53 +35,51 @@ interface UserEditModalProps extends ModalProps {
   mutateUser: (user: UserInfoModel) => void
 }
 
-const UserEditModal: FC<UserEditModalProps> = (props) => {
+export const UserEditModal: FC<UserEditModalProps> = (props) => {
   const { user, mutateUser, ...modalProps } = props
   const { user: self } = useUser()
-  const theme = useMantineTheme()
 
   const [disabled, setDisabled] = useState(false)
-
-  const [activeUser, setActiveUser] = useState<UserInfoModel>(user)
   const [profile, setProfile] = useState<AdminUserInfoModel>({})
 
   const { t } = useTranslation()
+  const isSelf = self?.userId === user.id
 
   useEffect(() => {
     setProfile({ ...user })
-    setActiveUser(user)
   }, [user])
 
-  const onChangeProfile = () => {
+  const onChangeProfile = async () => {
+    if (!user.id) return
+
     setDisabled(true)
-    api.admin
-      .adminUpdateUserInfo(activeUser.id!, profile)
-      .then(() => {
-        showNotification({
-          color: 'teal',
-          message: t('admin.notification.users.updated'),
-          icon: <Icon path={mdiCheck} size={1} />,
-        })
-        mutateUser({ ...activeUser, ...profile })
-        modalProps.onClose()
+
+    try {
+      await api.admin.adminUpdateUserInfo(user.id, profile)
+      showNotification({
+        color: 'teal',
+        message: t('admin.notification.users.updated'),
+        icon: <Icon path={mdiCheck} size={1} />,
       })
-      .catch((e) => showErrorNotification(e, t))
-      .finally(() => {
-        setDisabled(false)
-      })
+      mutateUser({ ...user, ...profile })
+      modalProps.onClose()
+    } catch (e) {
+      showErrorNotification(e, t)
+    } finally {
+      setDisabled(false)
+    }
   }
 
   return (
     <Modal {...modalProps}>
       {/* User Info */}
-      <Stack spacing="md" m="auto" mt={15}>
+      <Stack gap="md" m="auto" mt={15}>
         <Grid grow>
           <Grid.Col span={8}>
             <TextInput
               label={t('account.label.username')}
               type="text"
               w="100%"
-              ff={theme.fontFamilyMonospace}
               value={profile.userName ?? 'ctfer'}
               disabled={disabled}
               onChange={(event) => setProfile({ ...profile, userName: event.target.value })}
@@ -91,26 +87,35 @@ const UserEditModal: FC<UserEditModalProps> = (props) => {
           </Grid.Col>
           <Grid.Col span={4}>
             <Center>
-              <Avatar alt="avatar" radius="xl" size={70} src={activeUser.avatar}>
-                {activeUser.userName?.slice(0, 1) ?? 'U'}
+              <Avatar alt="avatar" radius="xl" size={70} src={user.avatar}>
+                {user.userName?.slice(0, 1) ?? 'U'}
               </Avatar>
             </Center>
           </Grid.Col>
         </Grid>
-        <Input.Wrapper label={t('admin.label.users.role')}>
-          <SegmentedControl
-            fullWidth
-            readOnly={self?.userId === user.id}
-            disabled={disabled}
-            color={RoleColorMap.get(profile.role ?? Role.User)}
-            value={profile.role ?? Role.User}
-            onChange={(value: Role) => setProfile({ ...profile, role: value })}
-            data={Object.entries(Role).map((role) => ({
-              value: role[1],
-              label: role[0],
-            }))}
-          />
-        </Input.Wrapper>
+        <Radio.Group
+          label={t('admin.label.users.role')}
+          value={profile.role as Role | undefined}
+          onChange={(value) => {
+            setProfile({ ...profile, role: value as Role })
+          }}
+        >
+          <Group grow mt="xs">
+            {Object.keys(Role).map((role) => (
+              <Radio
+                key={role}
+                value={role}
+                label={
+                  <Text size="sm" fw="bold">
+                    {role}
+                  </Text>
+                }
+                color={RoleColorMap.get(role as Role)}
+                disabled={disabled || isSelf}
+              />
+            ))}
+          </Group>
+        </Radio.Group>
         <SimpleGrid cols={2}>
           <TextInput
             label={t('account.label.email')}
@@ -156,20 +161,20 @@ const UserEditModal: FC<UserEditModalProps> = (props) => {
           onChange={(event) => setProfile({ ...profile, bio: event.target.value })}
         />
 
-        <Stack spacing={2}>
-          <Group position="apart">
+        <Stack gap={2}>
+          <Group justify="space-between">
             <Text size="sm" fw={500}>
               {t('common.label.ip')}
             </Text>
-            <Text size="sm" span fw={500} ff={theme.fontFamilyMonospace}>
+            <Text size="sm" span fw={500} ff="monospace">
               {user.ip}
             </Text>
           </Group>
-          <Group position="apart">
+          <Group justify="space-between">
             <Text size="sm" fw={500}>
               {t('admin.label.users.last_visit')}
             </Text>
-            <Text size="sm" span fw={500} ff={theme.fontFamilyMonospace}>
+            <Text size="sm" span fw={500} ff="monospace">
               {dayjs(user.lastVisitedUtc).format('YYYY-MM-DD HH:mm:ss')}
             </Text>
           </Group>
@@ -184,5 +189,3 @@ const UserEditModal: FC<UserEditModalProps> = (props) => {
     </Modal>
   )
 }
-
-export default UserEditModal

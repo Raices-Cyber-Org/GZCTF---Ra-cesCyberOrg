@@ -1,13 +1,4 @@
-import {
-  Button,
-  Group,
-  GroupPosition,
-  GroupProps,
-  LoadingOverlay,
-  Stack,
-  Tabs,
-  useMantineTheme,
-} from '@mantine/core'
+import { Button, Group, GroupProps, LoadingOverlay, Stack, Tabs } from '@mantine/core'
 import {
   mdiAccountGroupOutline,
   mdiBullhornOutline,
@@ -19,18 +10,20 @@ import {
 import { Icon } from '@mdi/react'
 import React, { FC, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useLocation, useNavigate, useParams } from 'react-router-dom'
-import AdminPage from '@Components/admin/AdminPage'
+import { useLocation, Link, useNavigate, useParams } from 'react-router'
+import { AdminPage } from '@Components/admin/AdminPage'
+import { DEFAULT_LOADING_OVERLAY } from '@Utils/Shared'
+import misc from '@Styles/Misc.module.css'
 
-interface GameEditTabProps extends React.PropsWithChildren {
+export interface GameEditTabProps extends React.PropsWithChildren {
   head?: React.ReactNode
   headProps?: GroupProps
-  contentPos?: GroupPosition
+  contentPos?: React.CSSProperties['justifyContent']
   isLoading?: boolean
   backUrl?: string
 }
 
-const WithGameEditTab: FC<GameEditTabProps> = ({
+export const WithGameEditTab: FC<GameEditTabProps> = ({
   children,
   isLoading,
   contentPos,
@@ -41,7 +34,6 @@ const WithGameEditTab: FC<GameEditTabProps> = ({
   const navigate = useNavigate()
   const location = useLocation()
   const { id } = useParams()
-  const theme = useMantineTheme()
   const { t } = useTranslation()
 
   const pages = [
@@ -72,48 +64,39 @@ const WithGameEditTab: FC<GameEditTabProps> = ({
         <>
           <Button
             w="9rem"
-            styles={{ inner: { justifyContent: 'space-between' } }}
-            leftIcon={<Icon path={mdiKeyboardBackspace} size={1} />}
-            onClick={() => navigate(backUrl ?? '/admin/games')}
+            component={Link}
+            classNames={{ inner: misc.justifyBetween }}
+            leftSection={<Icon path={mdiKeyboardBackspace} size={1} />}
+            to={backUrl ?? '/admin/games'}
           >
             {t('admin.button.back')}
           </Button>
-          <Group noWrap position={contentPos ?? 'apart'} w="calc(100% - 10rem)">
+          <Group wrap="nowrap" justify={contentPos ?? 'space-between'} w="calc(100% - 10rem)">
             {head}
           </Group>
         </>
       }
     >
-      <Group noWrap position="apart" align="flex-start" w="100%">
+      <Group wrap="nowrap" justify="space-between" align="flex-start" w="100%" pb="xl">
         <Tabs
           orientation="vertical"
           value={activeTab}
-          onTabChange={(value) => navigate(`/admin/games/${id}/${value}`)}
-          styles={{
-            root: {
-              width: '9rem',
-            },
-            tabsList: {
-              width: '9rem',
-            },
+          onChange={(value) => value && navigate(`/admin/games/${id}/${value}`)}
+          classNames={{
+            root: misc.w9rem,
+            list: misc.w9rem,
           }}
         >
           <Tabs.List>
             {pages.map((page) => (
-              <Tabs.Tab key={page.path} icon={<Icon path={page.icon} size={1} />} value={page.path}>
+              <Tabs.Tab key={page.path} leftSection={<Icon path={page.icon} size={1} />} value={page.path}>
                 {page.title}
               </Tabs.Tab>
             ))}
           </Tabs.List>
         </Tabs>
         <Stack w="calc(100% - 10rem)" pos="relative">
-          <LoadingOverlay
-            visible={isLoading ?? false}
-            overlayOpacity={1}
-            overlayColor={
-              theme.colorScheme === 'dark' ? theme.colors.gray[7] : theme.colors.white[2]
-            }
-          />
+          <LoadingOverlay visible={isLoading ?? false} overlayProps={DEFAULT_LOADING_OVERLAY} />
 
           {children}
         </Stack>
@@ -121,5 +104,3 @@ const WithGameEditTab: FC<GameEditTabProps> = ({
     </AdminPage>
   )
 }
-
-export default WithGameEditTab

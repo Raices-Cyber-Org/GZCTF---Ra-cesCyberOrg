@@ -3,44 +3,44 @@
 namespace GZCTF.Models.Request.Account;
 
 /// <summary>
-/// 基本账号信息更改
+/// Basic account information update
 /// </summary>
 public class ProfileUpdateModel
 {
     /// <summary>
-    /// 用户名
+    /// Username
     /// </summary>
-    [MinLength(3, ErrorMessageResourceName = nameof(Resources.Program.Model_UserNameTooShort),
+    [MinLength(Limits.MinUserNameLength, ErrorMessageResourceName = nameof(Resources.Program.Model_UserNameTooShort),
         ErrorMessageResourceType = typeof(Resources.Program))]
-    [MaxLength(15, ErrorMessageResourceName = nameof(Resources.Program.Model_UserNameTooLong),
+    [MaxLength(Limits.MaxUserNameLength, ErrorMessageResourceName = nameof(Resources.Program.Model_UserNameTooLong),
         ErrorMessageResourceType = typeof(Resources.Program))]
     public string? UserName { get; set; }
 
     /// <summary>
-    /// 描述
+    /// Description
     /// </summary>
-    [MaxLength(55, ErrorMessageResourceName = nameof(Resources.Program.Model_BioTooLong),
+    [MaxLength(Limits.MaxUserDataLength, ErrorMessageResourceName = nameof(Resources.Program.Model_BioTooLong),
         ErrorMessageResourceType = typeof(Resources.Program))]
     public string? Bio { get; set; }
 
     /// <summary>
-    /// 手机号
+    /// Phone number
     /// </summary>
     [Phone(ErrorMessageResourceName = nameof(Resources.Program.Model_MalformedPhoneNumber),
         ErrorMessageResourceType = typeof(Resources.Program))]
     public string? Phone { get; set; }
 
     /// <summary>
-    /// 真实姓名
+    /// Real name
     /// </summary>
-    [MaxLength(7, ErrorMessageResourceName = nameof(Resources.Program.Model_RealNameTooLong),
+    [MaxLength(Limits.MaxUserDataLength, ErrorMessageResourceName = nameof(Resources.Program.Model_RealNameTooLong),
         ErrorMessageResourceType = typeof(Resources.Program))]
     public string? RealName { get; set; }
 
     /// <summary>
-    /// 学工号
+    /// Student ID
     /// </summary>
-    [MaxLength(24, ErrorMessageResourceName = nameof(Resources.Program.Model_StdNumberTooLong),
+    [MaxLength(Limits.MaxStdNumberLength, ErrorMessageResourceName = nameof(Resources.Program.Model_StdNumberTooLong),
         ErrorMessageResourceType = typeof(Resources.Program))]
     public string? StdNumber { get; set; }
 }

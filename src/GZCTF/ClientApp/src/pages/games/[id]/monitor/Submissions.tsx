@@ -9,6 +9,7 @@ import {
   Table,
   Text,
   Tooltip,
+  useMantineColorScheme,
   useMantineTheme,
 } from '@mantine/core'
 import { showNotification } from '@mantine/notifications'
@@ -22,18 +23,22 @@ import {
   mdiDownload,
   mdiExclamationThick,
   mdiFlag,
+  mdiReplay,
 } from '@mdi/js'
 import { Icon } from '@mdi/react'
 import * as signalR from '@microsoft/signalr'
 import dayjs from 'dayjs'
 import { FC, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useParams } from 'react-router-dom'
-import WithGameMonitorTab from '@Components/WithGameMonitor'
-import { downloadBlob } from '@Utils/ApiHelper'
-import { useTableStyles, useTooltipStyles } from '@Utils/ThemeOverride'
-import { useGame } from '@Utils/useGame'
+import { useParams } from 'react-router'
+import { WithGameMonitor } from '@Components/WithGameMonitor'
+import { downloadBlob, handleAxiosError } from '@Utils/ApiHelper'
+import { useLanguage } from '@Utils/I18n'
+import { useDisplayInputStyles } from '@Utils/ThemeOverride'
+import { useGame } from '@Hooks/useGame'
 import api, { AnswerResult, Submission } from '@Api'
+import tableClasses from '@Styles/Table.module.css'
+import tooltipClasses from '@Styles/Tooltip.module.css'
 
 const ITEM_COUNT_PER_PAGE = 50
 
@@ -46,29 +51,16 @@ const AnswerResultMap = new Map([
 
 const AnswerResultIconMap = (size: number) => {
   const theme = useMantineTheme()
-  const colorIdx = theme.colorScheme === 'dark' ? 4 : 7
+  const { colorScheme } = useMantineColorScheme()
+
+  const colorIdx = colorScheme === 'dark' ? 4 : 7
 
   return new Map([
-    [
-      AnswerResult.Accepted,
-      <Icon path={mdiCheck} size={size} color={theme.colors.green[colorIdx]} />,
-    ],
-    [
-      AnswerResult.WrongAnswer,
-      <Icon path={mdiClose} size={size} color={theme.colors.red[colorIdx]} />,
-    ],
-    [
-      AnswerResult.NotFound,
-      <Icon path={mdiCrosshairsQuestion} size={size} color={theme.colors.gray[colorIdx]} />,
-    ],
-    [
-      AnswerResult.CheatDetected,
-      <Icon path={mdiExclamationThick} size={size} color={theme.colors.orange[colorIdx]} />,
-    ],
-    [
-      AnswerResult.FlagSubmitted,
-      <Icon path={mdiDotsHorizontal} size={size} color={theme.colors.gray[colorIdx]} />,
-    ],
+    [AnswerResult.Accepted, { path: mdiCheck, size, color: theme.colors.green[colorIdx] }],
+    [AnswerResult.WrongAnswer, { path: mdiClose, size, color: theme.colors.red[colorIdx] }],
+    [AnswerResult.NotFound, { path: mdiCrosshairsQuestion, size, color: theme.colors.gray[colorIdx] }],
+    [AnswerResult.CheatDetected, { path: mdiExclamationThick, size, color: theme.colors.orange[colorIdx] }],
+    [AnswerResult.FlagSubmitted, { path: mdiDotsHorizontal, size, color: theme.colors.gray[colorIdx] }],
   ])
 }
 
@@ -87,33 +79,42 @@ const Submissions: FC = () => {
   const { game } = useGame(numId)
 
   const iconMap = AnswerResultIconMap(0.8)
-  const { classes, cx, theme } = useTableStyles()
-  const { classes: tooltipClasses } = useTooltipStyles()
+  const { classes: inputClasses } = useDisplayInputStyles({ ff: 'monospace' })
+  const theme = useMantineTheme()
 
   const { t } = useTranslation()
+  const { locale } = useLanguage()
+  const viewport = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    api.game
-      .gameSubmissions(numId, {
-        type: type === 'All' ? undefined : type,
-        count: ITEM_COUNT_PER_PAGE,
-        skip: (activePage - 1) * ITEM_COUNT_PER_PAGE,
-      })
-      .then((data) => {
-        setSubmissions(data.data)
-      })
-      .catch((err) => {
+    viewport.current?.scrollTo({ top: 0, behavior: 'smooth' })
+  }, [activePage, viewport])
+
+  useEffect(() => {
+    const fetchSubmissions = async () => {
+      try {
+        const res = await api.game.gameSubmissions(numId, {
+          type: type === 'All' ? undefined : type,
+          count: ITEM_COUNT_PER_PAGE,
+          skip: (activePage - 1) * ITEM_COUNT_PER_PAGE,
+        })
+        setSubmissions(res.data)
+      } catch (err) {
         showNotification({
           color: 'red',
           title: t('game.notification.fetch_failed.submission'),
-          message: err.response.data.title,
+          message: await handleAxiosError(err),
           icon: <Icon path={mdiClose} size={1} />,
         })
-      })
+      }
+    }
+
+    fetchSubmissions()
+
     if (activePage === 1) {
       newSubmissions.current = []
     }
-  }, [activePage, type])
+  }, [activePage, type, numId, t])
 
   useEffect(() => {
     if (game?.end && new Date() < new Date(game.end)) {
@@ -132,18 +133,20 @@ const Submissions: FC = () => {
         update(new Date(message.time!))
       })
 
-      connection
-        .start()
-        .then(() => {
+      const startConnection = async () => {
+        try {
+          await connection.start()
           showNotification({
             color: 'teal',
             message: t('game.notification.connected.submission'),
             icon: <Icon path={mdiCheck} size={1} />,
           })
-        })
-        .catch((error) => {
-          console.error(error)
-        })
+        } catch (err) {
+          console.error(err)
+        }
+      }
+
+      startConnection()
 
       return () => {
         connection.stop().catch((err) => {
@@ -151,79 +154,57 @@ const Submissions: FC = () => {
         })
       }
     }
-  }, [game])
+  }, [game, numId, t])
 
-  const filteredSubs = newSubmissions.current.filter(
-    (item) => type === 'All' || item.status === type
-  )
+  const filteredSubs = newSubmissions.current.filter((item) => type === 'All' || item.status === type)
 
-  const rows = [...(activePage === 1 ? filteredSubs : []), ...(submissions ?? [])].map(
-    (item, i) => (
-      <tr
-        key={`${item.time}@${i}`}
-        className={
-          i === 0 && activePage === 1 && filteredSubs.length > 0 ? cx(classes.fade) : undefined
-        }
-      >
-        <td>{iconMap.get(item.status ?? AnswerResult.FlagSubmitted)}</td>
-        <td className={cx(classes.mono)}>
-          <Badge size="sm" color="indigo">
-            {dayjs(item.time).format('MM/DD HH:mm:ss')}
-          </Badge>
-        </td>
-        <td>
-          <Text size="sm" fw="bold">
-            {item.team ?? 'Team'}
-          </Text>
-        </td>
-        <td>
-          <Text ff={theme.fontFamilyMonospace} size="sm" fw="bold">
-            {item.user ?? 'User'}
-          </Text>
-        </td>
-        <td>{item.challenge ?? 'Challenge'}</td>
-        <td
-          style={{
-            width: '36vw',
-            maxWidth: '100%',
-            padding: 0,
-          }}
-        >
-          <Input
-            variant="unstyled"
-            value={item.answer}
-            readOnly
-            size="sm"
-            sx={(theme) => ({
-              input: {
-                fontFamily: theme.fontFamilyMonospace,
-              },
-              wrapper: {
-                width: '100%',
-              },
-            })}
-          />
-        </td>
-      </tr>
-    )
-  )
+  const rows = [...(activePage === 1 ? filteredSubs : []), ...(submissions ?? [])].map((item, i) => (
+    <Table.Tr
+      key={`${item.time}@${i}`}
+      className={i === 0 && activePage === 1 && filteredSubs.length > 0 ? tableClasses.fade : undefined}
+    >
+      <Table.Td>
+        <Icon {...iconMap.get(item.status ?? AnswerResult.FlagSubmitted)!} />
+      </Table.Td>
+      <Table.Td ff="monospace">
+        <Badge size="sm" color="indigo">
+          {dayjs(item.time).locale(locale).format('SL HH:mm:ss')}
+        </Badge>
+      </Table.Td>
+      <Table.Td>
+        <Text size="sm" fw="bold">
+          {item.team ?? 'Team'}
+        </Text>
+      </Table.Td>
+      <Table.Td>
+        <Text ff="monospace" size="sm" fw="bold">
+          {item.user ?? 'User'}
+        </Text>
+      </Table.Td>
+      <Table.Td>{item.challenge ?? 'Challenge'}</Table.Td>
+      <Table.Td w="36vw" maw="100%" p="0">
+        <Input variant="unstyled" value={item.answer} readOnly size="sm" classNames={inputClasses} />
+      </Table.Td>
+    </Table.Tr>
+  ))
 
   const onDownloadSubmissionSheet = () =>
-    downloadBlob(api.game.gameSubmissionSheet(numId, { format: 'blob' }), setDisabled, t)
+    downloadBlob(
+      api.game.gameSubmissionSheet(numId, { format: 'blob' }),
+      `Submission_${numId}_${Date.now()}.xlsx`,
+      setDisabled,
+      t
+    )
 
   return (
-    <WithGameMonitorTab>
-      <Group position="apart" w="100%">
+    <WithGameMonitor isLoading={!submissions}>
+      <Group justify="space-between" w="100%">
         <SegmentedControl
-          color="brand"
+          color={theme.primaryColor}
           value={type}
-          styles={{
-            root: {
-              background: 'transparent',
-            },
-          }}
-          onChange={(value: AnswerResult | 'All') => {
-            setType(value)
+          bg="transparent"
+          onChange={(value) => {
+            setType(value as AnswerResult | 'All')
             setPage(1)
           }}
           data={[
@@ -239,16 +220,15 @@ const Submissions: FC = () => {
               .filter((role) => role.value !== AnswerResult.FlagSubmitted),
           ]}
         />
-        <Group position="right">
-          <Tooltip
-            label={t('game.button.download.submissionsheet')}
-            position="left"
-            classNames={tooltipClasses}
-          >
+        <Group justify="right">
+          <Tooltip label={t('game.button.download.submissionsheet')} position="left" classNames={tooltipClasses}>
             <ActionIcon disabled={disabled} size="lg" onClick={onDownloadSubmissionSheet}>
               <Icon path={mdiDownload} size={1} />
             </ActionIcon>
           </Tooltip>
+          <ActionIcon size="lg" disabled={activePage <= 1} onClick={() => setPage(1)}>
+            <Icon path={mdiReplay} size={1} />
+          </ActionIcon>
           <ActionIcon size="lg" disabled={activePage <= 1} onClick={() => setPage(activePage - 1)}>
             <Icon path={mdiArrowLeftBold} size={1} />
           </ActionIcon>
@@ -262,27 +242,27 @@ const Submissions: FC = () => {
         </Group>
       </Group>
       <Paper shadow="md" p="md">
-        <ScrollArea offsetScrollbars h="calc(100vh - 200px)">
-          <Table className={classes.table}>
-            <thead>
-              <tr>
-                <th style={{ width: '0.6rem' }}>
+        <ScrollArea viewportRef={viewport} offsetScrollbars h="calc(100vh - 200px)">
+          <Table className={tableClasses.table}>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th w="0.6rem">
                   <Group align="center">
                     <Icon path={mdiFlag} size={0.8} />
                   </Group>
-                </th>
-                <th style={{ width: '8rem' }}>{t('common.label.time')}</th>
-                <th style={{ minWidth: '5rem' }}>{t('common.label.team')}</th>
-                <th style={{ minWidth: '5rem' }}>{t('common.label.user')}</th>
-                <th style={{ minWidth: '3rem' }}>{t('common.label.challenge')}</th>
-                <th className={cx(classes.mono)}>{t('common.label.flag')}</th>
-              </tr>
-            </thead>
-            <tbody>{rows}</tbody>
+                </Table.Th>
+                <Table.Th w="9rem">{t('common.label.time')}</Table.Th>
+                <Table.Th miw="4.5rem">{t('common.label.team')}</Table.Th>
+                <Table.Th miw="4.5rem">{t('common.label.user')}</Table.Th>
+                <Table.Th miw="3rem">{t('common.label.challenge')}</Table.Th>
+                <Table.Th ff="monospace">{t('common.label.flag')}</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>{rows}</Table.Tbody>
           </Table>
         </ScrollArea>
       </Paper>
-    </WithGameMonitorTab>
+    </WithGameMonitor>
   )
 }
 

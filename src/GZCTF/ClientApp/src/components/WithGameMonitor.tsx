@@ -1,33 +1,27 @@
-import { Button, Group, LoadingOverlay, Stack, Tabs, useMantineTheme } from '@mantine/core'
-import {
-  mdiExclamationThick,
-  mdiFileTableOutline,
-  mdiFlag,
-  mdiLightningBolt,
-  mdiPackageVariant,
-} from '@mdi/js'
+import { Button, Group, LoadingOverlay, Stack, Tabs } from '@mantine/core'
+import { mdiExclamationThick, mdiFlag, mdiLightningBolt, mdiPackageVariant, mdiTableArrowDown } from '@mdi/js'
 import { Icon } from '@mdi/react'
 import React, { FC, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useLocation, useNavigate, useParams } from 'react-router-dom'
-import WithGameTab from '@Components/WithGameTab'
-import WithNavBar from '@Components/WithNavbar'
-import WithRole from '@Components/WithRole'
+import { useLocation, useNavigate, useParams } from 'react-router'
+import { WithGameTab } from '@Components/WithGameTab'
+import { WithNavBar } from '@Components/WithNavbar'
+import { WithRole } from '@Components/WithRole'
 import { downloadBlob } from '@Utils/ApiHelper'
+import { DEFAULT_LOADING_OVERLAY } from '@Utils/Shared'
 import api, { Role } from '@Api'
+import misc from '@Styles/Misc.module.css'
 
 interface WithGameMonitorProps extends React.PropsWithChildren {
   isLoading?: boolean
 }
 
-const WithGameMonitor: FC<WithGameMonitorProps> = ({ children, isLoading }) => {
+export const WithGameMonitor: FC<WithGameMonitorProps> = ({ children, isLoading }) => {
   const { id } = useParams()
   const numId = parseInt(id ?? '-1')
 
   const navigate = useNavigate()
   const location = useLocation()
-  const theme = useMantineTheme()
-
   const { t } = useTranslation()
 
   const pages = [
@@ -52,19 +46,24 @@ const WithGameMonitor: FC<WithGameMonitorProps> = ({ children, isLoading }) => {
   }, [location])
 
   const onDownloadScoreboardSheet = () =>
-    downloadBlob(api.game.gameScoreboardSheet(numId, { format: 'blob' }), setDisabled, t)
+    downloadBlob(
+      api.game.gameScoreboardSheet(numId, { format: 'blob' }),
+      `Scoreboard_${numId}_${Date.now()}.xlsx`,
+      setDisabled,
+      t
+    )
 
   return (
     <WithNavBar width="90%">
       <WithRole requiredRole={Role.Monitor}>
         <WithGameTab>
-          <Group position="apart" align="flex-start">
+          <Group justify="space-between" align="flex-start">
             <Stack>
               <Button
                 disabled={disabled}
                 w="9rem"
-                styles={{ inner: { justifyContent: 'space-between' } }}
-                leftIcon={<Icon path={mdiFileTableOutline} size={1} />}
+                classNames={{ inner: misc.justifyBetween }}
+                leftSection={<Icon path={mdiTableArrowDown} size={1} />}
                 onClick={onDownloadScoreboardSheet}
               >
                 {t('game.button.download.scoreboard')}
@@ -72,23 +71,15 @@ const WithGameMonitor: FC<WithGameMonitorProps> = ({ children, isLoading }) => {
               <Tabs
                 orientation="vertical"
                 value={activeTab}
-                onTabChange={(value) => navigate(`/games/${id}/monitor/${value}`)}
-                styles={{
-                  root: {
-                    width: '9rem',
-                  },
-                  tabsList: {
-                    width: '9rem',
-                  },
+                onChange={(value) => value && navigate(`/games/${id}/monitor/${value}`)}
+                classNames={{
+                  root: misc.w9rem,
+                  list: misc.w9rem,
                 }}
               >
                 <Tabs.List>
                   {pages.map((page) => (
-                    <Tabs.Tab
-                      key={page.path}
-                      icon={<Icon path={page.icon} size={1} />}
-                      value={page.path}
-                    >
+                    <Tabs.Tab key={page.path} leftSection={<Icon path={page.icon} size={1} />} value={page.path}>
                       {page.title}
                     </Tabs.Tab>
                   ))}
@@ -96,13 +87,7 @@ const WithGameMonitor: FC<WithGameMonitorProps> = ({ children, isLoading }) => {
               </Tabs>
             </Stack>
             <Stack w="calc(100% - 10rem)" pos="relative">
-              <LoadingOverlay
-                visible={isLoading ?? false}
-                overlayOpacity={1}
-                overlayColor={
-                  theme.colorScheme === 'dark' ? theme.colors.gray[7] : theme.colors.white[2]
-                }
-              />
+              <LoadingOverlay visible={isLoading ?? false} overlayProps={DEFAULT_LOADING_OVERLAY} />
               {children}
             </Stack>
           </Group>
@@ -111,5 +96,3 @@ const WithGameMonitor: FC<WithGameMonitorProps> = ({ children, isLoading }) => {
     </WithNavBar>
   )
 }
-
-export default WithGameMonitor

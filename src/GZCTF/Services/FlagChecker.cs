@@ -13,13 +13,33 @@ public class FlagChecker(
     IServiceScopeFactory serviceScopeFactory) : IHostedService
 {
     CancellationTokenSource TokenSource { get; set; } = new();
+    const int MaxWorkerCount = 4;
+
+    internal static int GetWorkerCount()
+    {
+        // if RAM < 2GiB or CPU <= 3, return 1
+        // if RAM < 4GiB or CPU <= 6, return 2
+        // otherwise, return 4
+        var memoryInfo = GC.GetGCMemoryInfo();
+        double freeMemory = memoryInfo.TotalAvailableMemoryBytes / 1024.0 / 1024.0 / 1024.0;
+        var cpuCount = Environment.ProcessorCount;
+
+        if (freeMemory < 2 || cpuCount <= 3)
+            return 1;
+        if (freeMemory < 4 || cpuCount <= 6)
+            return 2;
+        return MaxWorkerCount;
+    }
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         TokenSource = new CancellationTokenSource();
 
-        for (var i = 0; i < 2; ++i)
-            _ = Checker(i, TokenSource.Token);
+        for (var i = 0; i < GetWorkerCount(); ++i)
+        {
+            await Task.Factory.StartNew(() => Checker(i, TokenSource.Token), cancellationToken,
+                TaskCreationOptions.LongRunning, TaskScheduler.Default);
+        }
 
         await using AsyncServiceScope scope = serviceScopeFactory.CreateAsyncScope();
 
@@ -75,69 +95,74 @@ public class FlagChecker(
                 {
                     (SubmissionType type, AnswerResult ans) = await instanceRepository.VerifyAnswer(item, token);
 
-                    if (ans == AnswerResult.NotFound)
+                    switch (ans)
                     {
-                        logger.Log(
-                            Program.StaticLocalizer[nameof(Resources.Program.FlagChecker_UnknownInstance),
-                                item.Team.Name,
-                                item.GameChallenge.Title],
-                            item.User,
-                            TaskStatus.NotFound, LogLevel.Warning);
-                    }
-                    else if (ans == AnswerResult.Accepted)
-                    {
-                        logger.Log(
-                            Program.StaticLocalizer[nameof(Resources.Program.FlagChecker_AnswerAccepted),
-                                item.Team.Name,
-                                item.GameChallenge.Title,
-                                item.Answer],
-                            item.User, TaskStatus.Success, LogLevel.Information);
-
-                        await eventRepository.AddEvent(
-                            GameEvent.FromSubmission(item, type, ans, Program.StaticLocalizer), token);
-
-                        // only flush the scoreboard if the contest is not ended and the submission is accepted
-                        if (item.Game.EndTimeUtc > item.SubmitTimeUtc)
-                            await cacheHelper.FlushScoreboardCache(item.GameId, token);
-                    }
-                    else
-                    {
-                        logger.Log(
-                            Program.StaticLocalizer[nameof(Resources.Program.FlagChecker_AnswerRejected),
-                                item.Team.Name,
-                                item.GameChallenge.Title,
-                                item.Answer],
-                            item.User, TaskStatus.Failed, LogLevel.Information);
-
-                        await eventRepository.AddEvent(
-                            GameEvent.FromSubmission(item, type, ans, Program.StaticLocalizer), token);
-
-                        CheatCheckInfo result = await instanceRepository.CheckCheat(item, token);
-                        ans = result.AnswerResult;
-
-                        if (ans == AnswerResult.CheatDetected)
-                        {
+                        case AnswerResult.NotFound:
                             logger.Log(
-                                Program.StaticLocalizer[nameof(Resources.Program.FlagChecker_CheatDetected),
-                                    item.Team.Name,
-                                    item.GameChallenge.Title,
-                                    result.SourceTeamName ?? ""],
-                                item.User, TaskStatus.Success, LogLevel.Information);
+                                Program.StaticLocalizer[nameof(Resources.Program.FlagChecker_UnknownInstance),
+                                    item.TeamName,
+                                    item.ChallengeName],
+                                item.User,
+                                TaskStatus.NotFound, LogLevel.Warning);
+                            break;
+                        case AnswerResult.Accepted:
+                            {
+                                logger.Log(
+                                    Program.StaticLocalizer[nameof(Resources.Program.FlagChecker_AnswerAccepted),
+                                        item.TeamName,
+                                        item.ChallengeName,
+                                        item.Answer],
+                                    item.User, TaskStatus.Success, LogLevel.Information);
 
-                            await eventRepository.AddEvent(
-                                new()
+                                await eventRepository.AddEvent(
+                                    GameEvent.FromSubmission(item, type, ans, Program.StaticLocalizer), token);
+
+                                // only flush the scoreboard if the contest is not ended and the submission is accepted
+                                if (item.Game!.EndTimeUtc > item.SubmitTimeUtc)
+                                    await cacheHelper.FlushScoreboardCache(item.GameId, token);
+                                break;
+                            }
+                        default:
+                            {
+                                logger.Log(
+                                    Program.StaticLocalizer[nameof(Resources.Program.FlagChecker_AnswerRejected),
+                                        item.TeamName,
+                                        item.ChallengeName,
+                                        item.Answer],
+                                    item.User, TaskStatus.Failed, LogLevel.Information);
+
+                                await eventRepository.AddEvent(
+                                    GameEvent.FromSubmission(item, type, ans, Program.StaticLocalizer), token);
+
+                                CheatCheckInfo result = await instanceRepository.CheckCheat(item, token);
+                                ans = result.AnswerResult;
+
+                                if (ans == AnswerResult.CheatDetected)
                                 {
-                                    Type = EventType.CheatDetected,
-                                    Values =
-                                        [item.GameChallenge.Title, item.Team.Name, result.SourceTeamName ?? ""],
-                                    TeamId = item.TeamId,
-                                    UserId = item.UserId,
-                                    GameId = item.GameId
-                                }, token);
-                        }
+                                    logger.Log(
+                                        Program.StaticLocalizer[nameof(Resources.Program.FlagChecker_CheatDetected),
+                                            item.TeamName,
+                                            item.ChallengeName,
+                                            result.SourceTeamName ?? ""],
+                                        item.User, TaskStatus.Success, LogLevel.Information);
+
+                                    await eventRepository.AddEvent(
+                                        new()
+                                        {
+                                            Type = EventType.CheatDetected,
+                                            Values =
+                                                [item.ChallengeName, item.TeamName, result.SourceTeamName ?? ""],
+                                            TeamId = item.TeamId,
+                                            UserId = item.UserId,
+                                            GameId = item.GameId
+                                        }, token);
+                                }
+
+                                break;
+                            }
                     }
 
-                    if (item.Game.EndTimeUtc > DateTimeOffset.UtcNow
+                    if (item.Game!.EndTimeUtc > DateTimeOffset.UtcNow
                         && type != SubmissionType.Unaccepted
                         && type != SubmissionType.Normal)
                         await gameNoticeRepository.AddNotice(

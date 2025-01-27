@@ -6,11 +6,11 @@ import {
   Group,
   Image,
   Input,
-  MultiSelect,
   NumberInput,
   SimpleGrid,
   Stack,
   Switch,
+  TagsInput,
   Text,
   Textarea,
   TextInput,
@@ -20,25 +20,19 @@ import { Dropzone } from '@mantine/dropzone'
 import { useClipboard, useInputState } from '@mantine/hooks'
 import { useModals } from '@mantine/modals'
 import { notifications, showNotification, updateNotification } from '@mantine/notifications'
-import {
-  mdiCheck,
-  mdiClipboard,
-  mdiClose,
-  mdiContentSaveOutline,
-  mdiDeleteOutline,
-  mdiRefresh,
-} from '@mdi/js'
+import { mdiCheck, mdiClipboard, mdiClose, mdiContentSaveOutline, mdiDeleteOutline, mdiDice5Outline } from '@mdi/js'
 import { Icon } from '@mdi/react'
 import dayjs from 'dayjs'
 import { FC, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router'
 import { SwitchLabel } from '@Components/admin/SwitchLabel'
-import WithGameEditTab from '@Components/admin/WithGameEditTab'
+import { WithGameEditTab } from '@Components/admin/WithGameEditTab'
 import { showErrorNotification, tryGetErrorMsg } from '@Utils/ApiHelper'
-import { ACCEPT_IMAGE_MIME_TYPE } from '@Utils/ThemeOverride'
-import { OnceSWRConfig } from '@Utils/useConfig'
+import { IMAGE_MIME_TYPES } from '@Utils/Shared'
+import { useAdminGame } from '@Hooks/useGame'
 import api, { GameInfoModel } from '@Api'
+import misc from '@Styles/Misc.module.css'
 
 const GenerateRandomCode = () => {
   const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
@@ -52,12 +46,11 @@ const GenerateRandomCode = () => {
 const GameInfoEdit: FC = () => {
   const { id } = useParams()
   const numId = parseInt(id ?? '-1')
-  const { data: gameSource, mutate } = api.edit.useEditGetGame(numId, OnceSWRConfig)
+  const { game: gameSource, mutate } = useAdminGame(numId)
   const [game, setGame] = useState<GameInfoModel>()
   const navigate = useNavigate()
 
   const [disabled, setDisabled] = useState(false)
-  const [organizations, setOrganizations] = useState<string[]>([])
   const [start, setStart] = useInputState(dayjs())
   const [end, setEnd] = useInputState(dayjs())
   const [wpddl, setWpddl] = useInputState(3)
@@ -82,14 +75,13 @@ const GameInfoEdit: FC = () => {
       setGame(gameSource)
       setStart(dayjs(gameSource.start))
       setEnd(dayjs(gameSource.end))
-      setOrganizations(gameSource.organizations || [])
 
       const wpddl = dayjs(gameSource.writeupDeadline).diff(gameSource.end, 'h')
       setWpddl(wpddl < 0 ? 0 : wpddl)
     }
   }, [id, gameSource])
 
-  const onUpdatePoster = (file: File | undefined) => {
+  const onUpdatePoster = async (file: File | undefined) => {
     if (!game || !file) return
 
     setDisabled(true)
@@ -102,73 +94,72 @@ const GameInfoEdit: FC = () => {
       autoClose: false,
     })
 
-    api.edit
-      .editUpdateGamePoster(game.id!, { file })
-      .then((res) => {
-        updateNotification({
-          id: 'upload-poster',
-          color: 'teal',
-          message: t('admin.notification.games.info.poster.uploaded'),
-          icon: <Icon path={mdiCheck} size={1} />,
-          autoClose: true,
-        })
-        mutate({ ...game, poster: res.data })
+    try {
+      const res = await api.edit.editUpdateGamePoster(game.id!, { file })
+      updateNotification({
+        id: 'upload-poster',
+        color: 'teal',
+        message: t('admin.notification.games.info.poster.uploaded'),
+        icon: <Icon path={mdiCheck} size={1} />,
+        autoClose: true,
+        loading: false,
       })
-      .catch((err) => {
-        updateNotification({
-          id: 'upload-poster',
-          color: 'red',
-          title: t('admin.notification.games.info.poster.upload_failed'),
-          message: tryGetErrorMsg(err, t),
-          icon: <Icon path={mdiClose} size={1} />,
-          autoClose: true,
-        })
+      mutate({ ...game, poster: res.data })
+    } catch (err) {
+      updateNotification({
+        id: 'upload-poster',
+        color: 'red',
+        title: t('admin.notification.games.info.poster.upload_failed'),
+        message: tryGetErrorMsg(err, t),
+        icon: <Icon path={mdiClose} size={1} />,
+        autoClose: true,
+        loading: false,
       })
-      .finally(() => {
-        setDisabled(false)
-      })
+    } finally {
+      setDisabled(false)
+    }
   }
 
-  const onUpdateInfo = () => {
+  const onUpdateInfo = async () => {
     if (!game?.title) return
-
     setDisabled(true)
-    api.edit
-      .editUpdateGame(game.id!, {
+
+    try {
+      await api.edit.editUpdateGame(game.id!, {
         ...game,
-        inviteCode: game.inviteCode?.length ?? 0 > 6 ? game.inviteCode : null,
-        start: start.toJSON(),
-        end: end.toJSON(),
-        writeupDeadline: end.add(wpddl, 'h').toJSON(),
+        inviteCode: (game.inviteCode?.length ?? 0 > 6) ? game.inviteCode : null,
+        start: start.valueOf(),
+        end: end.valueOf(),
+        writeupDeadline: end.add(wpddl, 'h').valueOf(),
       })
-      .then(() => {
-        showNotification({
-          color: 'teal',
-          message: t('admin.notification.games.info.info_updated'),
-          icon: <Icon path={mdiCheck} size={1} />,
-        })
-        mutate()
-        api.game.mutateGameGamesAll()
+      showNotification({
+        color: 'teal',
+        message: t('admin.notification.games.info.info_updated'),
+        icon: <Icon path={mdiCheck} size={1} />,
       })
-      .catch((e) => showErrorNotification(e, t))
-      .finally(() => {
-        setDisabled(false)
-      })
+      mutate()
+      api.game.mutateGameGames()
+    } catch (e) {
+      showErrorNotification(e, t)
+    } finally {
+      setDisabled(false)
+    }
   }
 
-  const onConfirmDelete = () => {
+  const onConfirmDelete = async () => {
     if (!game) return
-    api.edit
-      .editDeleteGame(game.id!)
-      .then(() => {
-        showNotification({
-          color: 'teal',
-          message: t('admin.notification.games.info.deleted'),
-          icon: <Icon path={mdiCheck} size={1} />,
-        })
-        navigate('/admin/games')
+
+    try {
+      await api.edit.editDeleteGame(game.id!)
+      showNotification({
+        color: 'teal',
+        message: t('admin.notification.games.info.deleted'),
+        icon: <Icon path={mdiCheck} size={1} />,
       })
-      .catch((e) => showErrorNotification(e, t))
+      navigate('/admin/games')
+    } catch (e) {
+      showErrorNotification(e, t)
+    }
   }
 
   const onCopyPublicKey = () => {
@@ -182,7 +173,7 @@ const GameInfoEdit: FC = () => {
 
   return (
     <WithGameEditTab
-      headProps={{ position: 'apart' }}
+      headProps={{ justify: 'apart' }}
       contentPos="right"
       isLoading={!game}
       head={
@@ -190,16 +181,12 @@ const GameInfoEdit: FC = () => {
           <Button
             disabled={disabled}
             color="red"
-            leftIcon={<Icon path={mdiDeleteOutline} size={1} />}
+            leftSection={<Icon path={mdiDeleteOutline} size={1} />}
             variant="outline"
             onClick={() =>
               modals.openConfirmModal({
                 title: t('admin.button.games.delete'),
-                children: (
-                  <Text size="sm">
-                    {t('admin.content.games.info.delete', { name: game?.title })}
-                  </Text>
-                ),
+                children: <Text size="sm">{t('admin.content.games.info.delete', { name: game?.title })}</Text>,
                 onConfirm: () => onConfirmDelete(),
                 confirmProps: { color: 'red' },
               })
@@ -207,15 +194,11 @@ const GameInfoEdit: FC = () => {
           >
             {t('admin.button.games.delete')}
           </Button>
-          <Button
-            leftIcon={<Icon path={mdiClipboard} size={1} />}
-            disabled={disabled}
-            onClick={onCopyPublicKey}
-          >
+          <Button leftSection={<Icon path={mdiClipboard} size={1} />} disabled={disabled} onClick={onCopyPublicKey}>
             {t('admin.button.games.copy_public_key')}
           </Button>
           <Button
-            leftIcon={<Icon path={mdiContentSaveOutline} size={1} />}
+            leftSection={<Icon path={mdiContentSaveOutline} size={1} />}
             disabled={disabled}
             onClick={onUpdateInfo}
           >
@@ -259,10 +242,8 @@ const GameInfoEdit: FC = () => {
           disabled={disabled}
           onChange={(e) => game && setGame({ ...game, inviteCode: e.target.value })}
           rightSection={
-            <ActionIcon
-              onClick={() => game && setGame({ ...game, inviteCode: GenerateRandomCode() })}
-            >
-              <Icon path={mdiRefresh} size={1} />
+            <ActionIcon onClick={() => game && setGame({ ...game, inviteCode: GenerateRandomCode() })}>
+              <Icon path={mdiDice5Outline} size={0.85} />
             </ActionIcon>
           }
         />
@@ -272,10 +253,7 @@ const GameInfoEdit: FC = () => {
           disabled={disabled}
           clearable={false}
           onChange={(e) => {
-            const newDate = dayjs(e)
-              .hour(start.hour())
-              .minute(start.minute())
-              .second(start.second())
+            const newDate = dayjs(e).hour(start.hour()).minute(start.minute()).second(start.second())
             setStart(newDate)
             if (newDate && end < newDate) {
               setEnd(newDate.add(2, 'h'))
@@ -348,7 +326,7 @@ const GameInfoEdit: FC = () => {
           />
         </Grid.Col>
         <Grid.Col span={3}>
-          <Stack spacing="xs" h="100%" justify="space-between">
+          <Stack gap="xs" h="100%" justify="space-between">
             <Switch
               pt="1.5em"
               disabled={disabled}
@@ -371,7 +349,7 @@ const GameInfoEdit: FC = () => {
           </Stack>
         </Grid.Col>
         <Grid.Col span={3}>
-          <Stack spacing="xs">
+          <Stack gap="xs">
             <NumberInput
               label={t('admin.content.games.info.writeup_deadline.label')}
               description={t('admin.content.games.info.writeup_deadline.description')}
@@ -393,16 +371,10 @@ const GameInfoEdit: FC = () => {
           </Stack>
         </Grid.Col>
       </Grid>
-      <Group grow position="apart">
+      <Group grow justify="space-between">
         <Textarea
-          label={
-            <Group spacing="sm">
-              <Text size="sm">{t('admin.content.games.info.writeup_instruction')}</Text>
-              <Text size="xs" c="dimmed">
-                {t('admin.content.markdown_support')}
-              </Text>
-            </Group>
-          }
+          label={t('admin.content.games.info.writeup_instruction')}
+          description={t('admin.content.markdown_support')}
           value={game?.writeupNote}
           w="100%"
           autosize
@@ -411,44 +383,23 @@ const GameInfoEdit: FC = () => {
           maxRows={3}
           onChange={(e) => game && setGame({ ...game, writeupNote: e.target.value })}
         />
-        <MultiSelect
-          label={
-            <Group spacing="sm">
-              <Text size="sm"> {t('admin.content.games.info.organizations.label')}</Text>
-              <Text size="xs" c="dimmed">
-                {t('admin.content.games.info.organizations.description')}
-              </Text>
-            </Group>
-          }
-          searchable
-          creatable
+        <TagsInput
+          label={t('admin.content.games.info.divisions.label')}
+          description={t('admin.content.games.info.divisions.description')}
           disabled={disabled}
-          placeholder={t('admin.placeholder.games.organizations')}
+          placeholder={t('admin.placeholder.games.divisions')}
           maxDropdownHeight={300}
-          value={game?.organizations ?? []}
-          styles={{
-            input: {
-              minHeight: 88,
-              maxHeight: 88,
-            },
-          }}
-          onChange={(e) => game && setGame({ ...game, organizations: e })}
-          data={organizations.map((o) => ({ value: o, label: o })) || []}
-          getCreateLabel={(query) =>
-            t('admin.content.games.info.organizations.add', { org: query })
-          }
-          onCreate={(query) => {
-            const item = { value: query, label: query }
-            setOrganizations([...organizations, query])
-            return item
-          }}
+          value={game?.divisions ?? []}
+          classNames={{ input: misc.gameDivEdit }}
+          onChange={(e) => game && setGame({ ...game, divisions: e })}
+          onClear={() => game && setGame({ ...game, divisions: [] })}
         />
       </Group>
       <Grid grow>
         <Grid.Col span={8}>
           <Textarea
             label={
-              <Group spacing="sm">
+              <Group gap="sm">
                 <Text size="sm">{t('admin.content.games.info.content')}</Text>
                 <Text size="xs" c="dimmed">
                   {t('admin.content.markdown_support')}
@@ -459,8 +410,8 @@ const GameInfoEdit: FC = () => {
             w="100%"
             autosize
             disabled={disabled}
-            minRows={8}
-            maxRows={8}
+            minRows={9}
+            maxRows={9}
             onChange={(e) => game && setGame({ ...game, content: e.target.value })}
           />
         </Grid.Col>
@@ -477,21 +428,17 @@ const GameInfoEdit: FC = () => {
                 })
               }}
               maxSize={3 * 1024 * 1024}
-              accept={ACCEPT_IMAGE_MIME_TYPE}
+              accept={IMAGE_MIME_TYPES}
               disabled={disabled}
-              styles={{
-                root: {
-                  height: '198px',
-                  padding: game?.poster ? '0' : '16px',
-                },
-              }}
+              data-poster={game?.poster || undefined}
+              classNames={{ root: misc.gamePoster }}
             >
-              <Center style={{ pointerEvents: 'none' }}>
+              <Center className={misc.noPointerEvents}>
                 {game?.poster ? (
-                  <Image height="195px" fit="contain" src={game.poster} alt="poster" />
+                  <Image height="209px" fit="contain" src={game.poster} alt="poster" />
                 ) : (
-                  <Center h="160px">
-                    <Stack spacing={0}>
+                  <Center h="200px">
+                    <Stack gap={0}>
                       <Text size="xl" inline>
                         {t('common.content.drop_zone.content', {
                           type: t('common.content.drop_zone.type.poster'),

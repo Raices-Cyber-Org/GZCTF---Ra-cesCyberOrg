@@ -7,7 +7,7 @@ namespace GZCTF.Repositories;
 
 public class ParticipationRepository(
     CacheHelper cacheHelper,
-    IFileRepository fileRepository,
+    IBlobRepository blobRepository,
     AppDbContext context) : RepositoryBase(context), IParticipationRepository
 {
     public async Task<bool> EnsureInstances(Participation part, Game game, CancellationToken token = default)
@@ -15,7 +15,7 @@ public class ParticipationRepository(
         GameChallenge[] challenges =
             await Context.GameChallenges.Where(c => c.Game == game && c.IsEnabled).ToArrayAsync(token);
 
-        // requery instead of Entry
+        // re-query instead of Entry
         part = await Context.Participations.Include(p => p.Challenges).SingleAsync(p => p.Id == part.Id, token);
 
         var update = challenges.Aggregate(false,
@@ -56,32 +56,54 @@ public class ParticipationRepository(
             .AnyAsync(p => p.User == user && p.Game == game
                                           && p.Participation.Status != ParticipationStatus.Rejected, token);
 
-    public async Task UpdateParticipationStatus(Participation part, ParticipationStatus status,
+    public async Task UpdateParticipation(Participation part, ParticipationEditModel model,
         CancellationToken token = default)
     {
-        ParticipationStatus oldStatus = part.Status;
-        part.Status = status;
+        var trans = await Context.Database.BeginTransactionAsync(token);
+        bool needFlush = false;
 
-        if (status == ParticipationStatus.Accepted)
+        if (model.Status != part.Status && model.Status is not null)
         {
-            part.Team.Locked = true;
+            ParticipationStatus oldStatus = part.Status;
+            part.Status = model.Status.Value;
 
-            // will also update participation status, update team lock
-            // will call SaveAsync
-            // also flush scoreboard when a team is re-accepted
-            if (await EnsureInstances(part, part.Game, token) || oldStatus == ParticipationStatus.Suspended)
-                // flush scoreboard when instances are updated
-                await cacheHelper.FlushScoreboardCache(part.Game.Id, token);
+            if (model.Status == ParticipationStatus.Accepted)
+            {
+                // lock team when accepted
+                part.Team.Locked = true;
 
-            return;
+                // will also update participation status, update team lock
+                // will call SaveAsync
+                // also flush scoreboard when a team is re-accepted
+                if (await EnsureInstances(part, part.Game, token) || oldStatus == ParticipationStatus.Suspended)
+                    // flush scoreboard when instances are updated
+                    needFlush = true;
+            }
+            else
+            {
+                // team will unlock automatically when request occur
+                await SaveAsync(token);
+
+                // flush scoreboard when a team is suspended
+                if (model.Status == ParticipationStatus.Suspended && part.Game.IsActive)
+                    needFlush = true;
+            }
         }
 
-        // team will unlock automatically when request occur
-        await SaveAsync(token);
+        if (model.Division != part.Division && part.Game.IsValidDivision(model.Division))
+        {
+            part.Division = model.Division;
+            await SaveAsync(token);
 
-        // flush scoreboard when a team is suspended
-        if (status == ParticipationStatus.Suspended && part.Game.IsActive)
+            // flush scoreboard when division is updated
+            if (part.Game.IsActive)
+                needFlush = true;
+        }
+
+        if (needFlush)
             await cacheHelper.FlushScoreboardCache(part.GameId, token);
+
+        await trans.CommitAsync(token);
     }
 
     public Task<Participation[]> GetParticipationsByIds(IEnumerable<int> ids, CancellationToken token = default) =>
@@ -97,18 +119,19 @@ public class ParticipationRepository(
         Context.RemoveRange(await Context.UserParticipations
             .Where(p => p.User == user && p.Team == team).ToArrayAsync(token));
 
-    public async Task RemoveParticipation(Participation part, CancellationToken token = default)
+    public async Task RemoveParticipation(Participation part, bool save = true, CancellationToken token = default)
     {
         await DeleteParticipationWriteUp(part, token);
 
         Context.Remove(part);
-        await SaveAsync(token);
+        if (save)
+            await SaveAsync(token);
     }
 
     public Task DeleteParticipationWriteUp(Participation part, CancellationToken token = default)
     {
         if (part.Writeup is not null)
-            return fileRepository.DeleteFile(part.Writeup, token);
+            return blobRepository.DeleteBlob(part.Writeup, token);
         return Task.CompletedTask;
     }
 }

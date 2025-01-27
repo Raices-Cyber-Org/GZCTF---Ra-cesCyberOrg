@@ -1,9 +1,13 @@
-﻿using System.Net;
+﻿/*
+ * This file is protected and may not be modified without permission.
+ * See LICENSE_ADDENDUM.txt for details.
+ */
+
+using System.Net;
 using Docker.DotNet;
 using Docker.DotNet.Models;
 using GZCTF.Models.Internal;
 using GZCTF.Services.Container.Provider;
-using GZCTF.Services.Interface;
 using ContainerStatus = GZCTF.Utils.ContainerStatus;
 
 namespace GZCTF.Services.Container.Manager;
@@ -29,7 +33,8 @@ public class DockerManager : IContainerManager
     {
         try
         {
-            await _client.Containers.RemoveContainerAsync(container.ContainerId, new() { Force = true }, token);
+            await _client.Containers.RemoveContainerAsync(container.ContainerId,
+                new() { Force = true }, token);
         }
         catch (DockerContainerNotFoundException)
         {
@@ -49,20 +54,13 @@ public class DockerManager : IContainerManager
             }
             else
             {
-                _logger.SystemLog(
-                    Program.StaticLocalizer[nameof(Resources.Program.ContainerManager_ContainerDeletionFailedStatus),
-                        container.ContainerId,
-                        e.StatusCode], TaskStatus.Failed, LogLevel.Warning);
-                _logger.SystemLog(
-                    Program.StaticLocalizer[nameof(Resources.Program.ContainerManager_ContainerDeletionFailedResponse),
-                        container.ContainerId,
-                        e.ResponseBody], TaskStatus.Failed, LogLevel.Error);
+                _logger.LogDeletionFailedWithHttpContext(container.ContainerId, e.StatusCode, e.ResponseBody);
                 return;
             }
         }
         catch (Exception e)
         {
-            _logger.LogError(e,
+            _logger.LogError(e, "{msg}",
                 Program.StaticLocalizer[nameof(Resources.Program.ContainerManager_ContainerDeletionFailed),
                     container.ContainerId]);
             return;
@@ -74,17 +72,47 @@ public class DockerManager : IContainerManager
     public async Task<Models.Data.Container?> CreateContainerAsync(ContainerConfig config,
         CancellationToken token = default)
     {
+        var imageName = config.Image.Split("/").LastOrDefault()?.Split(":").FirstOrDefault();
+
+        if (string.IsNullOrWhiteSpace(imageName))
+        {
+            _logger.SystemLog(
+                Program.StaticLocalizer[nameof(Resources.Program.ContainerManager_UnresolvedImageName), config.Image],
+                TaskStatus.Failed, LogLevel.Warning);
+            return null;
+        }
+
         CreateContainerParameters parameters = GetCreateContainerParameters(config);
 
         if (_meta.ExposePort)
         {
             parameters.ExposedPorts = new Dictionary<string, EmptyStruct> { [config.ExposedPort.ToString()] = new() };
-            parameters.HostConfig.PublishAllPorts = true;
+            parameters.HostConfig.PortBindings = new Dictionary<string, IList<PortBinding>>
+            {
+                // let docker choose a random port, do not use "PublishAllPorts" option
+                // reference: https://github.com/moby/moby/blob/master/libnetwork/portallocator/portallocator.go
+                // function: RequestPortsInRange
+                // comment:
+                //     If portStart and portEnd are 0 it returns
+                //     the first free port in the default ephemeral range.
+                [config.ExposedPort.ToString()] = [new PortBinding { HostPort = "0" }]
+            };
         }
 
-        CreateContainerResponse? containerRes = null;
+        CreateContainerResponse? containerRes;
+        var retry = 0;
+
+    CreateDockerContainer:
         try
         {
+            if (retry++ >= 3)
+            {
+                _logger.SystemLog(
+                    Program.StaticLocalizer[nameof(Resources.Program.ContainerManager_ContainerCreationFailed),
+                        parameters.Name], TaskStatus.Failed, LogLevel.Information);
+                return null;
+            }
+
             containerRes = await _client.Containers.CreateContainerAsync(parameters, token);
         }
         catch (DockerImageNotFoundException)
@@ -93,27 +121,48 @@ public class DockerManager : IContainerManager
                 Program.StaticLocalizer[nameof(Resources.Program.ContainerManager_PullContainerImage), config.Image],
                 TaskStatus.Pending, LogLevel.Information);
 
+            // pull the image and retry
             await _client.Images.CreateImageAsync(new() { FromImage = config.Image }, _meta.Auth,
                 new Progress<JSONMessage>(msg =>
                 {
                     Console.WriteLine($@"{msg.Status}|{msg.ProgressMessage}|{msg.ErrorMessage}");
                 }), token);
+
+            goto CreateDockerContainer;
         }
-        catch (Exception e)
+        catch (DockerApiException e)
         {
-            _logger.LogError(e,
-                Program.StaticLocalizer[nameof(Resources.Program.ContainerManager_ContainerCreationFailed),
-                    parameters.Name]);
+            if (e.StatusCode == HttpStatusCode.Conflict)
+            {
+                _logger.SystemLog(
+                    Program.StaticLocalizer[nameof(Resources.Program.ContainerManager_ContainerExisted),
+                        parameters.Name],
+                    TaskStatus.Duplicate,
+                    LogLevel.Warning);
+
+                // the container already exists, remove it and retry
+                try
+                {
+                    await _client.Containers.RemoveContainerAsync(parameters.Name,
+                        new() { Force = true }, token);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "{msg}",
+                        Program.StaticLocalizer[nameof(Resources.Program.ContainerManager_ContainerDeletionFailed),
+                            parameters.Name]);
+                    return null;
+                }
+
+                goto CreateDockerContainer;
+            }
+
+            _logger.LogCreationFailedWithHttpContext(parameters.Name, e.StatusCode, e.ResponseBody);
             return null;
         }
-
-        try
-        {
-            containerRes ??= await _client.Containers.CreateContainerAsync(parameters, token);
-        }
         catch (Exception e)
         {
-            _logger.LogError(e,
+            _logger.LogError(e, "{msg}",
                 Program.StaticLocalizer[nameof(Resources.Program.ContainerManager_ContainerCreationFailed),
                     parameters.Name]);
             return null;
@@ -121,26 +170,31 @@ public class DockerManager : IContainerManager
 
         var container = new Models.Data.Container { ContainerId = containerRes.ID, Image = config.Image };
 
-        var retry = 0;
-        bool started;
+        retry = 0;
 
-        do
+        while (true)
         {
-            started = await _client.Containers.StartContainerAsync(container.ContainerId, new(), token);
-            retry++;
-            if (retry == 3)
+            if (retry++ >= 3)
             {
                 _logger.SystemLog(
-                    Program.StaticLocalizer[nameof(Resources.Program.ContainerManager_ContainerInstanceStartFailed),
+                    Program.StaticLocalizer[
+                        nameof(Resources.Program.ContainerManager_ContainerInstanceStartFailed),
                         container.ContainerId[..12],
                         config.Image.Split("/").LastOrDefault() ?? ""],
                     TaskStatus.Failed, LogLevel.Warning);
+
+                await DestroyContainerAsync(container, token);
                 return null;
             }
 
-            if (!started)
-                await Task.Delay(500, token);
-        } while (!started);
+            var started = await _client.Containers.StartContainerAsync(container.ContainerId,
+                new(), token);
+
+            if (started)
+                break;
+
+            await Task.Delay(500, token);
+        }
 
         ContainerInspectResponse? info = await _client.Containers.InspectContainerAsync(container.ContainerId, token);
 
@@ -157,6 +211,8 @@ public class DockerManager : IContainerManager
                     nameof(Resources.Program.ContainerManager_ContainerInstanceCreationFailedWithError),
                     config.Image.Split("/").LastOrDefault() ?? "", info.State.Error],
                 TaskStatus.Failed, LogLevel.Warning);
+
+            await DestroyContainerAsync(container, token);
             return null;
         }
 
@@ -193,9 +249,19 @@ public class DockerManager : IContainerManager
         {
             Image = config.Image,
             Labels =
-                new Dictionary<string, string> { ["TeamId"] = config.TeamId, ["UserId"] = config.UserId.ToString() },
+                new Dictionary<string, string>
+                {
+                    ["TeamId"] = config.TeamId,
+                    ["UserId"] = config.UserId.ToString(),
+                    ["ChallengeId"] = config.ChallengeId.ToString()
+                },
             Name = DockerMetadata.GetName(config),
-            Env = config.Flag is null ? [] : [$"GZCTF_FLAG={config.Flag}"],
+            // The GZCTF identifier is protected by the License.
+            // DO NOT REMOVE OR MODIFY THE FOLLOWING LINE.
+            // Please see LICENSE_ADDENDUM.txt for details.
+            Env = config.Flag is null
+                ? [$"GZCTF_TEAM_ID={config.TeamId}"]
+                : [$"GZCTF_FLAG={config.Flag}", $"GZCTF_TEAM_ID={config.TeamId}"],
             HostConfig = new()
             {
                 Memory = config.MemoryLimit * 1024 * 1024,

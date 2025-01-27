@@ -5,11 +5,11 @@ import { mdiCheck, mdiClose } from '@mdi/js'
 import { Icon } from '@mdi/react'
 import { FC, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useLocation, useNavigate } from 'react-router-dom'
-import AccountView from '@Components/AccountView'
-import StrengthPasswordInput from '@Components/StrengthPasswordInput'
+import { useLocation, useNavigate } from 'react-router'
+import { AccountView } from '@Components/AccountView'
+import { StrengthPasswordInput } from '@Components/StrengthPasswordInput'
 import { showErrorNotification } from '@Utils/ApiHelper'
-import { usePageTitle } from '@Utils/usePageTitle'
+import { usePageTitle } from '@Hooks/usePageTitle'
 import api from '@Api'
 
 const Reset: FC = () => {
@@ -26,7 +26,7 @@ const Reset: FC = () => {
 
   usePageTitle(t('account.title.reset'))
 
-  const onReset = () => {
+  const onReset = async () => {
     if (pwd !== retypedPwd) {
       showNotification({
         color: 'red',
@@ -47,25 +47,25 @@ const Reset: FC = () => {
     }
 
     setDisabled(true)
-    api.account
-      .accountPasswordReset({
+
+    try {
+      await api.account.accountPasswordReset({
         rToken: token,
         email: email,
         password: pwd,
       })
-      .then(() => {
-        showNotification({
-          color: 'teal',
-          title: t('account.notification.reset.success.title'),
-          message: t('account.notification.reset.success.message'),
-          icon: <Icon path={mdiCheck} size={1} />,
-        })
-        navigate('/account/login')
+      showNotification({
+        color: 'teal',
+        title: t('account.notification.reset.success.title'),
+        message: t('account.notification.reset.success.message'),
+        icon: <Icon path={mdiCheck} size={1} />,
       })
-      .catch((err) => {
-        showErrorNotification(err, t)
-        setDisabled(false)
-      })
+      navigate('/account/login')
+    } catch (e) {
+      showErrorNotification(e, t)
+    } finally {
+      setDisabled(false)
+    }
   }
 
   const enterHandler = getHotkeyHandler([['Enter', onReset]])

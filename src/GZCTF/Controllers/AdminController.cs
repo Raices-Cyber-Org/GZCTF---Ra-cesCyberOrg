@@ -1,6 +1,8 @@
-﻿using System.Diagnostics.CodeAnalysis;
+﻿using System.ComponentModel.DataAnnotations;
+using System.Diagnostics.CodeAnalysis;
 using System.Net.Mime;
 using System.Reflection;
+using FluentStorage.Blobs;
 using GZCTF.Extensions;
 using GZCTF.Middlewares;
 using GZCTF.Models.Internal;
@@ -8,7 +10,8 @@ using GZCTF.Models.Request.Account;
 using GZCTF.Models.Request.Admin;
 using GZCTF.Models.Request.Info;
 using GZCTF.Repositories.Interface;
-using GZCTF.Services.Interface;
+using GZCTF.Services.Cache;
+using GZCTF.Services.Config;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -19,7 +22,7 @@ using Microsoft.Extensions.Options;
 namespace GZCTF.Controllers;
 
 /// <summary>
-/// 管理员数据交互接口
+/// Administration APIs
 /// </summary>
 [RequireAdmin]
 [ApiController]
@@ -30,7 +33,8 @@ namespace GZCTF.Controllers;
 public class AdminController(
     UserManager<UserInfo> userManager,
     ILogger<AdminController> logger,
-    IFileRepository fileService,
+    IBlobStorage storage,
+    IBlobRepository blobService,
     ILogRepository logRepository,
     IConfigService configService,
     IGameRepository gameRepository,
@@ -41,14 +45,14 @@ public class AdminController(
     IStringLocalizer<Program> localizer) : ControllerBase
 {
     /// <summary>
-    /// 获取配置
+    /// Get configuration
     /// </summary>
     /// <remarks>
-    /// 使用此接口获取全局设置，需要Admin权限
+    /// Use this API to get global settings, requires Admin permission
     /// </remarks>
-    /// <response code="200">全局配置</response>
-    /// <response code="401">未授权用户</response>
-    /// <response code="403">禁止访问</response>
+    /// <response code="200">Global configuration</response>
+    /// <response code="401">Unauthorized user</response>
+    /// <response code="403">Forbidden</response>
     [HttpGet("Config")]
     [ProducesResponseType(typeof(ConfigEditModel), StatusCodes.Status200OK)]
     public IActionResult GetConfigs()
@@ -67,14 +71,14 @@ public class AdminController(
     }
 
     /// <summary>
-    /// 更改配置
+    /// Change configuration
     /// </summary>
     /// <remarks>
-    /// 使用此接口更改全局设置，需要Admin权限
+    /// Use this API to change global settings, requires Admin permission
     /// </remarks>
-    /// <response code="200">更新成功</response>
-    /// <response code="401">未授权用户</response>
-    /// <response code="403">禁止访问</response>
+    /// <response code="200">Update successful</response>
+    /// <response code="401">Unauthorized user</response>
+    /// <response code="403">Forbidden</response>
     [HttpPut("Config")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public async Task<IActionResult> UpdateConfigs([FromBody] ConfigEditModel model, CancellationToken token)
@@ -82,41 +86,134 @@ public class AdminController(
         foreach (PropertyInfo prop in typeof(ConfigEditModel).GetProperties())
         {
             var value = prop.GetValue(model);
-            if (value is not null)
-                await configService.SaveConfig(prop.PropertyType, value, token);
+
+            if (value is null)
+                continue;
+
+            await configService.SaveConfig(prop.PropertyType, value, token);
         }
 
         return Ok();
     }
 
     /// <summary>
-    /// 获取全部用户
+    /// Change platform Logo
     /// </summary>
     /// <remarks>
-    /// 使用此接口获取全部用户，需要Admin权限
+    /// Use this API to change the platform Logo, requires Admin permission
     /// </remarks>
-    /// <response code="200">用户列表</response>
-    /// <response code="401">未授权用户</response>
-    /// <response code="403">禁止访问</response>
-    [HttpGet("Users")]
-    [ProducesResponseType(typeof(ArrayResponse<UserInfoModel>), StatusCodes.Status200OK)]
-    public async Task<IActionResult> Users([FromQuery] int count = 100, [FromQuery] int skip = 0,
-        CancellationToken token = default) =>
-        Ok((await (
-            from user in userManager.Users.OrderBy(e => e.Id).Skip(skip).Take(count)
-            select UserInfoModel.FromUserInfo(user)
-        ).ToArrayAsync(token)).ToResponse(await userManager.Users.CountAsync(token)));
+    /// <response code="200">Update successful</response>
+    /// <response code="401">Unauthorized user</response>
+    /// <response code="403">Forbidden</response>
+    [HttpPost("Config/Logo")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<IActionResult> UpdateLogo(IFormFile file, CancellationToken token)
+    {
+        switch (file.Length)
+        {
+            case 0:
+                return BadRequest(new RequestResponse(localizer[nameof(Resources.Program.File_SizeZero)]));
+            case > 3 * 1024 * 1024:
+                return BadRequest(new RequestResponse(localizer[nameof(Resources.Program.File_SizeTooLarge)]));
+        }
+
+        if (!await DeleteCurrentLogo(token))
+            return BadRequest(new RequestResponse(localizer[nameof(Resources.Program.Admin_LogoUpdateFailed)]));
+
+        LocalFile? logo = await blobService.CreateOrUpdateImage(file, "logo", 640, token);
+        if (logo is null)
+            return BadRequest(new RequestResponse(localizer[nameof(Resources.Program.Admin_LogoUpdateFailed)]));
+
+        LocalFile? favicon = await blobService.CreateOrUpdateImage(file, "favicon", 256, token);
+        if (favicon is null)
+            return BadRequest(new RequestResponse(localizer[nameof(Resources.Program.Admin_LogoUpdateFailed)]));
+
+        HashSet<Config> configSet =
+        [
+            new($"{nameof(GlobalConfig)}:{nameof(GlobalConfig.LogoHash)}", logo.Hash, [CacheKey.ClientConfig]),
+            new($"{nameof(GlobalConfig)}:{nameof(GlobalConfig.FaviconHash)}", favicon.Hash, [CacheKey.Favicon])
+        ];
+
+        await configService.SaveConfigSet(configSet, token);
+
+        return Ok();
+    }
 
     /// <summary>
-    /// 批量添加用户
+    /// Reset platform Logo
     /// </summary>
     /// <remarks>
-    /// 使用此接口批量添加用户，需要Admin权限
+    /// Use this API to reset the platform Logo, requires Admin permission
     /// </remarks>
-    /// <response code="200">成功添加</response>
-    /// <response code="400">用户校验失败</response>
-    /// <response code="401">未授权用户</response>
-    /// <response code="403">禁止访问</response>
+    /// <response code="200">Updated successfully</response>
+    /// <response code="401">Unauthorized user</response>
+    /// <response code="403">Forbidden</response>
+    [HttpDelete("Config/Logo")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<IActionResult> ResetLogo(CancellationToken token)
+    {
+        if (!await DeleteCurrentLogo(token))
+            return BadRequest(new RequestResponse(localizer[nameof(Resources.Program.Admin_LogoUpdateFailed)]));
+
+        HashSet<Config> configSet =
+        [
+            new($"{nameof(GlobalConfig)}:{nameof(GlobalConfig.LogoHash)}", string.Empty, [CacheKey.ClientConfig]),
+            new($"{nameof(GlobalConfig)}:{nameof(GlobalConfig.FaviconHash)}", string.Empty, [CacheKey.Favicon])
+        ];
+
+        await configService.SaveConfigSet(configSet, token);
+
+        return Ok();
+    }
+
+    async Task<bool> DeleteCurrentLogo(CancellationToken token)
+    {
+        GlobalConfig globalConfig = serviceProvider.GetRequiredService<IOptionsSnapshot<GlobalConfig>>().Value;
+
+        return await DeleteByHash(globalConfig.LogoHash, token) &&
+               await DeleteByHash(globalConfig.FaviconHash, token);
+    }
+
+    async Task<bool> DeleteByHash(string? hash, CancellationToken token)
+    {
+        if (hash is not null && Codec.FileHashRegex().IsMatch(hash))
+            return await blobService.DeleteBlobByHash(hash, token) switch
+            {
+                TaskStatus.Success or TaskStatus.NotFound => true,
+                _ => false
+            };
+
+        return true;
+    }
+
+    /// <summary>
+    /// Get all users
+    /// </summary>
+    /// <remarks>
+    /// Use this API to get all users, requires Admin permission
+    /// </remarks>
+    /// <response code="200">User list</response>
+    /// <response code="401">Unauthorized user</response>
+    /// <response code="403">Forbidden</response>
+    [HttpGet("Users")]
+    [ProducesResponseType(typeof(ArrayResponse<UserInfoModel>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> Users([FromQuery][Range(0, 500)] int count = 100, [FromQuery] int skip = 0,
+        CancellationToken token = default) =>
+        Ok((await userManager.Users.OrderBy(e => e.Id).Skip(skip).Take(count)
+                .Select(u => UserInfoModel.FromUserInfo(u))
+                .ToArrayAsync(token))
+            .ToResponse(await userManager.Users.CountAsync(token)));
+
+    /// <summary>
+    /// Add users in batch
+    /// </summary>
+    /// <remarks>
+    /// Use this API to add users in batch, requires Admin permission
+    /// </remarks>
+    /// <response code="200">Successfully added</response>
+    /// <response code="400">User validation failed</response>
+    /// <response code="401">Unauthorized user</response>
+    /// <response code="403">Forbidden</response>
     [HttpPost("Users")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(RequestResponse), StatusCodes.Status400BadRequest)]
@@ -134,7 +231,10 @@ public class AdminController(
                 IdentityResult result = await userManager.CreateAsync(userInfo, user.Password);
 
                 if (result.Succeeded)
+                {
+                    users.Add((userInfo, user.TeamName));
                     continue;
+                }
 
                 userInfo = result.Errors.FirstOrDefault()?.Code switch
                 {
@@ -190,54 +290,56 @@ public class AdminController(
     }
 
     /// <summary>
-    /// 搜索用户
+    /// Search users
     /// </summary>
     /// <remarks>
-    /// 使用此接口搜索用户，需要Admin权限
+    /// Use this API to search users, requires Admin permission
     /// </remarks>
-    /// <response code="200">用户列表</response>
-    /// <response code="401">未授权用户</response>
-    /// <response code="403">禁止访问</response>
+    /// <response code="200">User list</response>
+    /// <response code="401">Unauthorized user</response>
+    /// <response code="403">Forbidden</response>
     [HttpPost("Users/Search")]
     [ProducesResponseType(typeof(ArrayResponse<UserInfoModel>), StatusCodes.Status200OK)]
-    public async Task<IActionResult> SearchUsers([FromQuery] string hint, CancellationToken token = default) =>
-        Ok((await userManager.Users.Where(item =>
-                    EF.Functions.Like(item.UserName!, $"%{hint}%") ||
-                    EF.Functions.Like(item.StdNumber, $"%{hint}%") ||
-                    EF.Functions.Like(item.Email!, $"%{hint}%") ||
-                    EF.Functions.Like(item.Id.ToString(), $"%{hint}%") ||
-                    EF.Functions.Like(item.RealName, $"%{hint}%")
-                )
-                .OrderBy(e => e.Id).Take(30).ToArrayAsync(token))
-            .Select(UserInfoModel.FromUserInfo)
-            .ToResponse());
+    public async Task<IActionResult> SearchUsers([FromQuery] string hint, CancellationToken token = default)
+    {
+        var loweredHint = hint.ToLower();
+        UserInfo[] data = await userManager.Users.Where(item =>
+            item.UserName!.ToLower().Contains(loweredHint) ||
+            item.StdNumber.ToLower().Contains(loweredHint) ||
+            item.Email!.ToLower().Contains(loweredHint) ||
+            item.PhoneNumber!.ToLower().Contains(loweredHint) ||
+            item.Id.ToString().ToLower().Contains(loweredHint) ||
+            item.RealName.ToLower().Contains(loweredHint)
+        ).OrderBy(e => e.Id).Take(30).ToArrayAsync(token);
+
+        return Ok(data.Select(UserInfoModel.FromUserInfo).ToResponse());
+    }
 
     /// <summary>
-    /// 获取全部队伍信息
+    /// Get all team information
     /// </summary>
     /// <remarks>
-    /// 使用此接口获取全部队伍，需要Admin权限
+    /// Use this API to get all teams, requires Admin permission
     /// </remarks>
-    /// <response code="200">用户列表</response>
-    /// <response code="401">未授权用户</response>
-    /// <response code="403">禁止访问</response>
+    /// <response code="200">User list</response>
+    /// <response code="401">Unauthorized user</response>
+    /// <response code="403">Forbidden</response>
     [HttpGet("Teams")]
     [ProducesResponseType(typeof(ArrayResponse<TeamInfoModel>), StatusCodes.Status200OK)]
-    public async Task<IActionResult> Teams([FromQuery] int count = 100, [FromQuery] int skip = 0,
+    public async Task<IActionResult> Teams([FromQuery][Range(0, 500)] int count = 100, [FromQuery] int skip = 0,
         CancellationToken token = default) =>
-        Ok((await teamRepository.GetTeams(count, skip, token))
-            .Select(team => TeamInfoModel.FromTeam(team))
+        Ok((await teamRepository.GetTeams(count, skip, token)).Select(team => TeamInfoModel.FromTeam(team))
             .ToResponse(await teamRepository.CountAsync(token)));
 
     /// <summary>
-    /// 搜索队伍
+    /// Search teams
     /// </summary>
     /// <remarks>
-    /// 使用此接口搜索队伍，需要Admin权限
+    /// Use this API to search teams, requires Admin permission
     /// </remarks>
-    /// <response code="200">用户列表</response>
-    /// <response code="401">未授权用户</response>
-    /// <response code="403">禁止访问</response>
+    /// <response code="200">User list</response>
+    /// <response code="401">Unauthorized user</response>
+    /// <response code="403">Forbidden</response>
     [HttpPost("Teams/Search")]
     [ProducesResponseType(typeof(ArrayResponse<TeamInfoModel>), StatusCodes.Status200OK)]
     public async Task<IActionResult> SearchTeams([FromQuery] string hint, CancellationToken token = default) =>
@@ -246,15 +348,15 @@ public class AdminController(
             .ToResponse());
 
     /// <summary>
-    /// 修改队伍信息
+    /// Modify team information
     /// </summary>
     /// <remarks>
-    /// 使用此接口修改队伍信息，需要Admin权限
+    /// Use this API to modify team information, requires Admin permission
     /// </remarks>
-    /// <response code="200">成功更新</response>
-    /// <response code="401">未授权用户</response>
-    /// <response code="403">禁止访问</response>
-    /// <response code="404">队伍未找到</response>
+    /// <response code="200">Successfully updated</response>
+    /// <response code="401">Unauthorized user</response>
+    /// <response code="403">Forbidden</response>
+    /// <response code="404">Team not found</response>
     [HttpPut("Teams/{id:int}")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(RequestResponse), StatusCodes.Status404NotFound)]
@@ -273,15 +375,15 @@ public class AdminController(
     }
 
     /// <summary>
-    /// 修改用户信息
+    /// Modify user information
     /// </summary>
     /// <remarks>
-    /// 使用此接口修改用户信息，需要Admin权限
+    /// Use this API to modify user information, requires Admin permission
     /// </remarks>
-    /// <response code="200">成功更新</response>
-    /// <response code="401">未授权用户</response>
-    /// <response code="403">禁止访问</response>
-    /// <response code="404">用户未找到</response>
+    /// <response code="200">Successfully updated</response>
+    /// <response code="401">Unauthorized user</response>
+    /// <response code="403">Forbidden</response>
+    /// <response code="404">User not found</response>
     [HttpPut("Users/{userid}")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(RequestResponse), StatusCodes.Status404NotFound)]
@@ -295,7 +397,7 @@ public class AdminController(
 
         if (model.UserName is not null && model.UserName != user.UserName)
         {
-            var result = await userManager.SetUserNameAsync(user, model.UserName);
+            IdentityResult result = await userManager.SetUserNameAsync(user, model.UserName);
 
             if (!result.Succeeded)
                 return HandleIdentityError(result.Errors);
@@ -303,7 +405,7 @@ public class AdminController(
 
         if (model.Email is not null && model.Email != user.Email)
         {
-            var result = await userManager.SetEmailAsync(user, model.Email);
+            IdentityResult result = await userManager.SetEmailAsync(user, model.Email);
 
             if (!result.Succeeded)
                 return HandleIdentityError(result.Errors);
@@ -316,15 +418,15 @@ public class AdminController(
     }
 
     /// <summary>
-    /// 重置用户密码
+    /// Reset user password
     /// </summary>
     /// <remarks>
-    /// 使用此接口重置用户密码，需要Admin权限
+    /// Use this API to reset user password, requires Admin permission
     /// </remarks>
-    /// <response code="200">成功获取</response>
-    /// <response code="401">未授权用户</response>
-    /// <response code="403">禁止访问</response>
-    /// <response code="404">用户未找到</response>
+    /// <response code="200">Successfully retrieved</response>
+    /// <response code="401">Unauthorized user</response>
+    /// <response code="403">Forbidden</response>
+    /// <response code="404">User not found</response>
     [HttpDelete("Users/{userid:guid}/Password")]
     [ProducesResponseType(typeof(string), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(RequestResponse), StatusCodes.Status404NotFound)]
@@ -344,15 +446,15 @@ public class AdminController(
     }
 
     /// <summary>
-    /// 删除用户
+    /// Delete user
     /// </summary>
     /// <remarks>
-    /// 使用此接口删除用户，需要Admin权限
+    /// Use this API to delete user, requires Admin permission
     /// </remarks>
-    /// <response code="200">成功获取</response>
-    /// <response code="401">未授权用户</response>
-    /// <response code="403">禁止访问</response>
-    /// <response code="404">用户未找到</response>
+    /// <response code="200">Successfully retrieved</response>
+    /// <response code="401">Unauthorized user</response>
+    /// <response code="403">Forbidden</response>
+    /// <response code="404">User not found</response>
     [HttpDelete("Users/{userid:guid}")]
     [ProducesResponseType(typeof(string), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(RequestResponse), StatusCodes.Status404NotFound)]
@@ -379,15 +481,15 @@ public class AdminController(
     }
 
     /// <summary>
-    /// 删除队伍
+    /// Delete team
     /// </summary>
     /// <remarks>
-    /// 使用此接口删除队伍，需要Admin权限
+    /// Use this API to delete team, requires Admin permission
     /// </remarks>
-    /// <response code="200">成功获取</response>
-    /// <response code="401">未授权用户</response>
-    /// <response code="403">禁止访问</response>
-    /// <response code="404">用户未找到</response>
+    /// <response code="200">Successfully retrieved</response>
+    /// <response code="401">Unauthorized user</response>
+    /// <response code="403">Forbidden</response>
+    /// <response code="404">User not found</response>
     [HttpDelete("Teams/{id:int}")]
     [ProducesResponseType(typeof(string), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(RequestResponse), StatusCodes.Status404NotFound)]
@@ -405,14 +507,14 @@ public class AdminController(
     }
 
     /// <summary>
-    /// 获取用户信息
+    /// Get user information
     /// </summary>
     /// <remarks>
-    /// 使用此接口获取用户信息，需要Admin权限
+    /// Use this API to get user information, requires Admin permission
     /// </remarks>
-    /// <response code="200">用户对象</response>
-    /// <response code="401">未授权用户</response>
-    /// <response code="403">禁止访问</response>
+    /// <response code="200">User object</response>
+    /// <response code="401">Unauthorized user</response>
+    /// <response code="403">Forbidden</response>
     [HttpGet("Users/{userid:guid}")]
     [ProducesResponseType(typeof(ProfileUserInfoModel), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(RequestResponse), StatusCodes.Status404NotFound)]
@@ -428,34 +530,35 @@ public class AdminController(
     }
 
     /// <summary>
-    /// 获取全部日志
+    /// Get all logs
     /// </summary>
     /// <remarks>
-    /// 使用此接口获取全部日志，需要Admin权限
+    /// Use this API to get all logs, requires Admin permission
     /// </remarks>
-    /// <response code="200">日志列表</response>
-    /// <response code="401">未授权用户</response>
-    /// <response code="403">禁止访问</response>
+    /// <response code="200">Log list</response>
+    /// <response code="401">Unauthorized user</response>
+    /// <response code="403">Forbidden</response>
     [HttpGet("Logs")]
     [ProducesResponseType(typeof(LogMessageModel[]), StatusCodes.Status200OK)]
-    public async Task<IActionResult> Logs([FromQuery] string? level = "All", [FromQuery] int count = 50,
+    public async Task<IActionResult> Logs([FromQuery] string? level = "All",
+        [FromQuery][Range(0, 1000)] int count = 50,
         [FromQuery] int skip = 0, CancellationToken token = default) =>
         Ok(await logRepository.GetLogs(skip, count, level, token));
 
     /// <summary>
-    /// 更新参与状态
+    /// Update participation status
     /// </summary>
     /// <remarks>
-    /// 使用此接口更新队伍参与状态，审核申请，需要Admin权限
+    /// Use this API to update team participation status, review application, requires Admin permission
     /// </remarks>
-    /// <response code="200">更新成功</response>
-    /// <response code="401">未授权用户</response>
-    /// <response code="403">禁止访问</response>
-    /// <response code="404">参与对象未找到</response>
-    [HttpPut("Participation/{id:int}/{status}")]
+    /// <response code="200">Update successful</response>
+    /// <response code="401">Unauthorized user</response>
+    /// <response code="403">Forbidden</response>
+    /// <response code="404">Participation object not found</response>
+    [HttpPut("Participation/{id:int}")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(RequestResponse), StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> Participation(int id, ParticipationStatus status,
+    public async Task<IActionResult> Participation(int id, [FromBody] ParticipationEditModel model,
         CancellationToken token = default)
     {
         Participation? participation = await participationRepository.GetParticipationById(id, token);
@@ -464,21 +567,21 @@ public class AdminController(
             return NotFound(new RequestResponse(localizer[nameof(Resources.Program.Admin_ParticipationNotFound)],
                 StatusCodes.Status404NotFound));
 
-        await participationRepository.UpdateParticipationStatus(participation, status, token);
+        await participationRepository.UpdateParticipation(participation, model, token);
 
         return Ok();
     }
 
     /// <summary>
-    /// 获取全部 Writeup 基本信息
+    /// Get all Writeup basic information
     /// </summary>
     /// <remarks>
-    /// 使用此接口获取 Writeup 基本信息，需要Admin权限
+    /// Use this API to get Writeup basic information, requires Admin permission
     /// </remarks>
-    /// <response code="200">更新成功</response>
-    /// <response code="401">未授权用户</response>
-    /// <response code="403">禁止访问</response>
-    /// <response code="404">比赛未找到</response>
+    /// <response code="200">Update successful</response>
+    /// <response code="401">Unauthorized user</response>
+    /// <response code="403">Forbidden</response>
+    /// <response code="404">Game not found</response>
     [HttpGet("Writeups/{id:int}")]
     [ProducesResponseType(typeof(WriteupInfoModel[]), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(RequestResponse), StatusCodes.Status404NotFound)]
@@ -494,15 +597,15 @@ public class AdminController(
     }
 
     /// <summary>
-    /// 下载全部 Writeup
+    /// Download all Writeups
     /// </summary>
     /// <remarks>
-    /// 使用此接口下载全部 Writeup，需要Admin权限
+    /// Use this API to download all Writeups, requires Admin permission
     /// </remarks>
-    /// <response code="200">下载成功</response>
-    /// <response code="401">未授权用户</response>
-    /// <response code="403">禁止访问</response>
-    /// <response code="404">比赛未找到</response>
+    /// <response code="200">Downloaded successfully</response>
+    /// <response code="401">Unauthorized user</response>
+    /// <response code="403">Forbidden</response>
+    /// <response code="404">Game not found</response>
     [HttpGet("Writeups/{id:int}/All")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(RequestResponse), StatusCodes.Status404NotFound)]
@@ -516,37 +619,35 @@ public class AdminController(
 
         WriteupInfoModel[] wps = await participationRepository.GetWriteups(game, token);
         var filename = $"Writeups-{game.Title}-{DateTimeOffset.UtcNow:yyyyMMdd-HH.mm.ssZ}";
-        Stream stream = await Codec.ZipFilesAsync(wps.Select(p => p.File), FilePath.Uploads, filename, token);
-        stream.Seek(0, SeekOrigin.Begin);
 
-        return File(stream, "application/zip", $"{filename}.zip");
+        return new TarFilesResult(storage, wps.Select(p => p.File), PathHelper.Uploads, filename, token);
     }
 
     /// <summary>
-    /// 获取全部容器实例
+    /// Get all container instances
     /// </summary>
     /// <remarks>
-    /// 使用此接口获取全部容器实例，需要Admin权限
+    /// Use this API to get all container instances, requires Admin permission
     /// </remarks>
-    /// <response code="200">实例列表</response>
-    /// <response code="401">未授权用户</response>
-    /// <response code="403">禁止访问</response>
+    /// <response code="200">Instance list</response>
+    /// <response code="401">Unauthorized user</response>
+    /// <response code="403">Forbidden</response>
     [HttpGet("Instances")]
     [ProducesResponseType(typeof(ArrayResponse<ContainerInstanceModel>), StatusCodes.Status200OK)]
     public async Task<IActionResult> Instances(CancellationToken token = default) =>
         Ok(new ArrayResponse<ContainerInstanceModel>(await containerRepository.GetContainerInstances(token)));
 
     /// <summary>
-    /// 删除容器实例
+    /// Delete container instance
     /// </summary>
     /// <remarks>
-    /// 使用此接口强制删除容器实例，需要Admin权限
+    /// Use this API to forcibly delete container instance, requires Admin permission
     /// </remarks>
-    /// <response code="200">成功获取</response>
-    /// <response code="400">容器实例销毁失败</response>
-    /// <response code="401">未授权用户</response>
-    /// <response code="403">禁止访问</response>
-    /// <response code="404">容器实例未找到</response>
+    /// <response code="200">Successfully retrieved</response>
+    /// <response code="400">Container instance destruction failed</response>
+    /// <response code="401">Unauthorized user</response>
+    /// <response code="403">Forbidden</response>
+    /// <response code="404">Container instance not found</response>
     [HttpDelete("Instances/{id:guid}")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(RequestResponse), StatusCodes.Status400BadRequest)]
@@ -568,19 +669,19 @@ public class AdminController(
     }
 
     /// <summary>
-    /// 获取全部文件
+    /// Get all files
     /// </summary>
     /// <remarks>
-    /// 使用此接口获取全部文件，需要Admin权限
+    /// Use this API to get all files, requires Admin permission
     /// </remarks>
-    /// <response code="200">文件列表</response>
-    /// <response code="401">未授权用户</response>
-    /// <response code="403">禁止访问</response>
+    /// <response code="200">File list</response>
+    /// <response code="401">Unauthorized user</response>
+    /// <response code="403">Forbidden</response>
     [HttpGet("Files")]
     [ProducesResponseType(typeof(ArrayResponse<LocalFile>), StatusCodes.Status200OK)]
-    public async Task<IActionResult> Files([FromQuery] int count = 50, [FromQuery] int skip = 0,
+    public async Task<IActionResult> Files([FromQuery][Range(0, 500)] int count = 50, [FromQuery] int skip = 0,
         CancellationToken token = default) =>
-        Ok(new ArrayResponse<LocalFile>(await fileService.GetFiles(count, skip, token)));
+        Ok(new ArrayResponse<LocalFile>(await blobService.GetBlobs(count, skip, token)));
 
     IActionResult HandleIdentityError(IEnumerable<IdentityError> errors) =>
         BadRequest(new RequestResponse(errors.FirstOrDefault()?.Description ??

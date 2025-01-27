@@ -12,54 +12,61 @@ namespace GZCTF.Models.Data;
 public partial class UserInfo : IdentityUser<Guid>
 {
     /// <summary>
-    /// 用户角色
+    /// Override Guid to use Ulid
+    /// </summary>
+    [PersonalData]
+    public override Guid Id { get; set; } = Guid.CreateVersion7();
+
+    /// <summary>
+    /// User role
     /// </summary>
     [ProtectedPersonalData]
     public Role Role { get; set; } = Role.User;
 
     /// <summary>
-    /// 用户最近访问IP
+    /// User's recent IP address
     /// </summary>
+    [MaxLength(Limits.MaxIPLength)]
     [ProtectedPersonalData]
     public string IP { get; set; } = "0.0.0.0";
 
     /// <summary>
-    /// 用户最近登录时间
+    /// User's last sign-in time
     /// </summary>
     public DateTimeOffset LastSignedInUtc { get; set; } = DateTimeOffset.FromUnixTimeSeconds(0);
 
     /// <summary>
-    /// 用户最近访问时间
+    /// User's last visit time
     /// </summary>
     public DateTimeOffset LastVisitedUtc { get; set; } = DateTimeOffset.FromUnixTimeSeconds(0);
 
     /// <summary>
-    /// 用户注册时间
+    /// User registration time
     /// </summary>
     public DateTimeOffset RegisterTimeUtc { get; set; } = DateTimeOffset.FromUnixTimeSeconds(0);
 
     /// <summary>
-    /// 个性签名
+    /// User bio
     /// </summary>
-    [MaxLength(63)]
+    [MaxLength(Limits.MaxUserDataLength)]
     public string Bio { get; set; } = string.Empty;
 
     /// <summary>
-    /// 真实姓名
+    /// Real name
     /// </summary>
-    [MaxLength(7)]
+    [MaxLength(Limits.MaxUserDataLength)]
     [ProtectedPersonalData]
     public string RealName { get; set; } = string.Empty;
 
     /// <summary>
-    /// 学工号
+    /// Student ID
     /// </summary>
-    [MaxLength(31)]
+    [MaxLength(Limits.MaxStdNumberLength)]
     [ProtectedPersonalData]
     public string StdNumber { get; set; } = string.Empty;
 
     /// <summary>
-    /// 在练习排行榜中隐藏
+    /// Hide in exercise scoreboard
     /// </summary>
     public bool ExerciseVisible { get; set; } = true;
 
@@ -68,7 +75,7 @@ public partial class UserInfo : IdentityUser<Guid>
     public string? AvatarUrl => AvatarHash is null ? null : $"/assets/{AvatarHash}/avatar";
 
     /// <summary>
-    /// 通过Http请求更新用户最新访问时间和IP
+    /// Update user's last visit time and IP address via HTTP request
     /// </summary>
     /// <param name="context"></param>
     public void UpdateByHttpContext(HttpContext context)
@@ -120,19 +127,19 @@ public partial class UserInfo : IdentityUser<Guid>
     #region Db Relationship
 
     /// <summary>
-    /// 头像哈希
+    /// Avatar hash
     /// </summary>
-    [MaxLength(64)]
+    [MaxLength(Limits.FileHashLength)]
     public string? AvatarHash { get; set; }
 
     /// <summary>
-    /// 个人提交记录
+    /// Personal submission records
     /// </summary>
     [MemoryPackIgnore]
     public List<Submission> Submissions { get; set; } = [];
 
     /// <summary>
-    /// 参与的队伍
+    /// Participated teams
     /// </summary>
     [MemoryPackIgnore]
     public List<Team> Teams { get; set; } = [];

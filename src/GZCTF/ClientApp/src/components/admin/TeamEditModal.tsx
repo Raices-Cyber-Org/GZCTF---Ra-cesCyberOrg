@@ -26,7 +26,7 @@ interface TeamEditModalProps extends ModalProps {
   mutateTeam: (team: TeamInfoModel) => void
 }
 
-const TeamEditModal: FC<TeamEditModalProps> = (props) => {
+export const TeamEditModal: FC<TeamEditModalProps> = (props) => {
   const { team, mutateTeam, ...modalProps } = props
 
   const theme = useMantineTheme()
@@ -41,39 +41,39 @@ const TeamEditModal: FC<TeamEditModalProps> = (props) => {
     setActiveTeam(team)
   }, [team])
 
-  const onChangeTeamInfo = () => {
+  const onChangeTeamInfo = async () => {
     setDisabled(true)
-    api.admin
-      .adminUpdateTeam(activeTeam.id!, teamInfo)
-      .then(() => {
-        showNotification({
-          color: 'teal',
-          message: t('team.notification.updated'),
-          icon: <Icon path={mdiCheck} size={1} />,
-        })
-        mutateTeam({
-          ...activeTeam,
-          name: teamInfo.name,
-          bio: teamInfo.bio,
-          locked: teamInfo.locked ?? activeTeam.locked,
-        })
-        modalProps.onClose()
+
+    try {
+      await api.admin.adminUpdateTeam(activeTeam.id!, teamInfo)
+      showNotification({
+        color: 'teal',
+        message: t('team.notification.updated'),
+        icon: <Icon path={mdiCheck} size={1} />,
       })
-      .catch((e) => showErrorNotification(e, t))
-      .finally(() => {
-        setDisabled(false)
+      mutateTeam({
+        ...activeTeam,
+        name: teamInfo.name,
+        bio: teamInfo.bio,
+        locked: teamInfo.locked ?? activeTeam.locked,
       })
+      modalProps.onClose()
+    } catch (e) {
+      showErrorNotification(e, t)
+    } finally {
+      setDisabled(false)
+    }
   }
 
   return (
     <Modal {...modalProps}>
       {/* User Info */}
-      <Stack spacing="md" m="auto" mt={15}>
+      <Stack gap="md" m="auto" mt={15}>
         <Grid grow>
           <Grid.Col span={8}>
             <TextInput
               label={
-                <Group position="left" spacing="xs">
+                <Group justify="left" gap="xs">
                   <Text size="sm">{t('team.label.name')}</Text>
                 </Group>
               }
@@ -104,24 +104,24 @@ const TeamEditModal: FC<TeamEditModalProps> = (props) => {
           onChange={(event) => setTeamInfo({ ...teamInfo, bio: event.target.value })}
         />
 
-        <Group position="left">
+        <Group justify="left">
           <Text size="sm">{t('team.label.members')}</Text>
           {team.locked && <Icon path={mdiLockOutline} size={0.8} color={theme.colors.yellow[6]} />}
         </Group>
         <ScrollArea h={165} offsetScrollbars>
-          <Stack spacing="xs">
+          <Stack gap="xs">
             {activeTeam.members?.map((user) => (
-              <Group position="apart">
-                <Group position="left">
+              <Group key={user.id} justify="space-between">
+                <Group justify="left">
                   <Avatar alt="avatar" src={user.avatar} radius="xl">
                     {user.userName?.slice(0, 1) ?? 'U'}
                   </Avatar>
-                  <Stack spacing={0}>
+                  <Stack gap={0}>
                     <Text fw={500}>{user.userName}</Text>
-                    <Text size="xs" c="dimmed">{`#${user.id?.substring(0, 8)}`}</Text>
+                    <Text size="xs" c="dimmed">{`#${user.id?.substring(28)}`}</Text>
                   </Stack>
                 </Group>
-                <Group position="right">
+                <Group justify="right">
                   {user.captain && <Icon path={mdiStar} size={1} color={theme.colors.yellow[4]} />}
                 </Group>
               </Group>
@@ -138,5 +138,3 @@ const TeamEditModal: FC<TeamEditModalProps> = (props) => {
     </Modal>
   )
 }
-
-export default TeamEditModal

@@ -5,12 +5,13 @@ import { mdiCheck, mdiClose } from '@mdi/js'
 import { Icon } from '@mdi/react'
 import { FC, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Link, useNavigate } from 'react-router-dom'
-import AccountView from '@Components/AccountView'
-import Captcha, { useCaptchaRef } from '@Components/Captcha'
-import StrengthPasswordInput from '@Components/StrengthPasswordInput'
-import { usePageTitle } from '@Utils/usePageTitle'
+import { Link, useNavigate } from 'react-router'
+import { AccountView } from '@Components/AccountView'
+import { Captcha, useCaptchaRef } from '@Components/Captcha'
+import { StrengthPasswordInput } from '@Components/StrengthPasswordInput'
+import { usePageTitle } from '@Hooks/usePageTitle'
 import api, { RegisterStatus } from '@Api'
+import misc from '@Styles/Misc.module.css'
 
 const Register: FC = () => {
   const [pwd, setPwd] = useInputState('')
@@ -20,7 +21,7 @@ const Register: FC = () => {
   const [disabled, setDisabled] = useState(false)
 
   const navigate = useNavigate()
-  const { captchaRef, getToken } = useCaptchaRef()
+  const { captchaRef, getToken, cleanUp } = useCaptchaRef()
 
   const { t } = useTranslation()
 
@@ -101,7 +102,10 @@ const Register: FC = () => {
           title: data.title,
           message: data.message,
           icon: <Icon path={mdiCheck} size={1} />,
+          loading: false,
+          autoClose: true,
         })
+        cleanUp(true)
 
         if (res.data.data === RegisterStatus.LoggedIn) navigate('/')
         else navigate('/account/login')
@@ -113,7 +117,10 @@ const Register: FC = () => {
         title: t('common.error.encountered'),
         message: `${err.response.data.title}`,
         icon: <Icon path={mdiClose} size={1} />,
+        loading: false,
+        autoClose: true,
       })
+      cleanUp(false)
     } finally {
       setDisabled(false)
     }
@@ -141,11 +148,7 @@ const Register: FC = () => {
         disabled={disabled}
         onChange={(event) => setUname(event.currentTarget.value)}
       />
-      <StrengthPasswordInput
-        value={pwd}
-        onChange={(event) => setPwd(event.currentTarget.value)}
-        disabled={disabled}
-      />
+      <StrengthPasswordInput value={pwd} onChange={(event) => setPwd(event.currentTarget.value)} disabled={disabled} />
       <PasswordInput
         required
         label={t('account.label.password_retype')}
@@ -156,14 +159,7 @@ const Register: FC = () => {
         error={pwd !== retypedPwd}
       />
       <Captcha action="register" ref={captchaRef} />
-      <Anchor
-        sx={(theme) => ({
-          fontSize: theme.fontSizes.xs,
-          alignSelf: 'end',
-        })}
-        component={Link}
-        to="/account/login"
-      >
+      <Anchor fz="xs" className={misc.alignSelfEnd} component={Link} to="/account/login">
         {t('account.anchor.login')}
       </Anchor>
       <Button type="submit" fullWidth onClick={onRegister} disabled={disabled}>

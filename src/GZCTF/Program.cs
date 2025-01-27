@@ -1,28 +1,51 @@
+/*
+ * GZ::CTF
+ *
+ * Copyright © 2022-present GZTimeWalker
+ *
+ * This source code is licensed under the AGPLv3 license found in the LICENSE file
+ * in the root directory of this source tree.
+ *
+ * Identifiers related to "GZCTF" (including variations and derivations) are protected.
+ * Examples include "GZCTF", "GZ::CTF", "GZCTF_FLAG", and similar constructs.
+ *
+ * Modifications to these identifiers are prohibited as per the LICENSE_ADDENDUM.txt
+ */
+
 global using GZCTF.Models.Data;
 global using GZCTF.Utils;
 global using AppDbContext = GZCTF.Models.AppDbContext;
 global using TaskStatus = GZCTF.Utils.TaskStatus;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
+using System.Net.Mime;
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Text;
 using GZCTF.Extensions;
 using GZCTF.Hubs;
 using GZCTF.Middlewares;
+using GZCTF.Models;
 using GZCTF.Models.Internal;
 using GZCTF.Repositories;
 using GZCTF.Repositories.Interface;
 using GZCTF.Services;
 using GZCTF.Services.Cache;
+using GZCTF.Services.Config;
 using GZCTF.Services.Container;
-using GZCTF.Services.Interface;
+using GZCTF.Services.CronJob;
+using GZCTF.Services.HealthCheck;
+using GZCTF.Services.Mail;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.ResponseCompression;
+using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Localization;
+using Scalar.AspNetCore;
 using Serilog;
 using StackExchange.Redis;
 
@@ -32,27 +55,39 @@ Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
 GZCTF.Program.Banner();
 
-FilePath.EnsureDirs();
+#region Json
+
+builder.Services.ConfigureHttpJsonOptions(options =>
+{
+    options.SerializerOptions.TypeInfoResolverChain.Insert(0, AppJsonSerializerContext.Default);
+    options.SerializerOptions.Converters.Add(new DateTimeOffsetJsonConverter());
+});
+
+#endregion Json
 
 #region Host
 
 builder.Services.AddLocalization(options => options.ResourcesPath = "Resources")
     .Configure<RequestLocalizationOptions>(options =>
     {
-        string[] supportedCultures = ["en-US", "zh-CN", "ja-JP"];
-
         options
-            .AddSupportedCultures(supportedCultures)
-            .AddSupportedUICultures(supportedCultures);
+            .AddSupportedCultures(GZCTF.Program.SupportedCultures)
+            .AddSupportedUICultures(GZCTF.Program.SupportedCultures);
 
         options.ApplyCurrentCultureToResponseHeaders = true;
     });
 
 builder.WebHost.ConfigureKestrel(options =>
 {
-    var kestrelSection = builder.Configuration.GetSection("Kestrel");
+    IConfigurationSection kestrelSection = builder.Configuration.GetSection("Kestrel");
     options.Configure(kestrelSection);
     kestrelSection.Bind(options);
+
+    // "bool? is true" is necessary for if statement
+    // ReSharper disable once RedundantBoolCompare
+    if (builder.Configuration.GetValue<bool>("EnableTLS") is true)
+        options.ConfigureEndpointDefaults(defaultsOptions =>
+            defaultsOptions.Protocols = HttpProtocols.Http1AndHttp2AndHttp3);
 });
 
 builder.Logging.ClearProviders();
@@ -61,76 +96,71 @@ builder.Host.UseSerilog(dispose: true);
 builder.Configuration.AddEnvironmentVariables("GZCTF_");
 Log.Logger = LogHelper.GetInitLogger();
 
+await PathHelper.EnsureDirsAsync(builder.Environment);
+
 #endregion Host
 
 #region AppDbContext
 
-if (GZCTF.Program.IsTesting || (builder.Environment.IsDevelopment() &&
-                                !builder.Configuration.GetSection("ConnectionStrings").Exists()))
-{
-    builder.Services.AddDbContext<AppDbContext>(
-        options => options.UseInMemoryDatabase("TestDb")
-    );
-}
-else
-{
-    if (!builder.Configuration.GetSection("ConnectionStrings").GetSection("Database").Exists())
-        GZCTF.Program.ExitWithFatalMessage(
-            GZCTF.Program.StaticLocalizer[nameof(GZCTF.Resources.Program.Database_NoConnectionString)]);
+if (!builder.Configuration.GetSection("ConnectionStrings").GetSection("Database").Exists())
+    GZCTF.Program.ExitWithFatalMessage(
+        GZCTF.Program.StaticLocalizer[nameof(GZCTF.Resources.Program.Database_NoConnectionString)]);
 
-    builder.Services.AddDbContext<AppDbContext>(
-        options =>
-        {
-            options.UseNpgsql(builder.Configuration.GetConnectionString("Database"),
-                o => o.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery));
+builder.Services.AddDbContext<AppDbContext>(
+    options =>
+    {
+        options.UseNpgsql(builder.Configuration.GetConnectionString("Database"),
+            o => o.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery));
 
-            if (!builder.Environment.IsDevelopment())
-                return;
+        if (!builder.Environment.IsDevelopment())
+            return;
 
-            options.EnableSensitiveDataLogging();
-            options.EnableDetailedErrors();
-        }
-    );
-}
+        options.EnableSensitiveDataLogging();
+        options.EnableDetailedErrors();
+    }
+);
 
 #endregion AppDbContext
 
 #region Configuration
 
-if (!GZCTF.Program.IsTesting)
-    try
+try
+{
+    builder.Configuration.AddEntityConfiguration(options =>
     {
-        builder.Configuration.AddEntityConfiguration(options =>
-        {
-            if (builder.Configuration.GetSection("ConnectionStrings").GetSection("Database").Exists())
-                options.UseNpgsql(builder.Configuration.GetConnectionString("Database"));
-            else
-                options.UseInMemoryDatabase("TestDb");
-        });
-    }
-    catch (Exception e)
-    {
-        if (builder.Configuration.GetSection("ConnectionStrings").GetSection("Database").Exists())
-            Log.Logger.Error(GZCTF.Program.StaticLocalizer[
-                nameof(GZCTF.Resources.Program.Database_CurrentConnectionString),
-                builder.Configuration.GetConnectionString("Database") ?? "null"]);
-        GZCTF.Program.ExitWithFatalMessage(
-            GZCTF.Program.StaticLocalizer[nameof(GZCTF.Resources.Program.Database_ConnectionFailed), e.Message]);
-    }
+        options.UseNpgsql(builder.Configuration.GetConnectionString("Database"));
+    });
+}
+catch (Exception e)
+{
+    if (builder.Configuration.GetSection("ConnectionStrings").GetSection("Database").Exists())
+        Log.Logger.Error(GZCTF.Program.StaticLocalizer[
+            nameof(GZCTF.Resources.Program.Database_CurrentConnectionString),
+            builder.Configuration.GetConnectionString("Database") ?? "null"]);
+    GZCTF.Program.ExitWithFatalMessage(
+        GZCTF.Program.StaticLocalizer[nameof(GZCTF.Resources.Program.Database_ConnectionFailed), e.Message]);
+}
+
+var storage = builder.Configuration.GetConnectionString("Storage");
+builder.AddStorage(storage);
 
 #endregion Configuration
 
 #region OpenApiDocument
 
 builder.Services.AddRouting(options => options.LowercaseUrls = true);
-builder.Services.AddOpenApiDocument(settings =>
-{
-    settings.DocumentName = "v1";
-    settings.Version = "v1";
-    settings.Title = "GZCTF Server API";
-    settings.Description = "GZCTF Server API Document";
-    settings.UseControllerSummaryAsTagDescription = true;
-});
+
+if (builder.Environment.IsDevelopment())
+    builder.Services.AddOpenApiDocument(settings =>
+    {
+        settings.DocumentName = "v1";
+        settings.Version = "v1";
+        settings.Title = "GZCTF Server API";
+        settings.Description = "GZCTF Server API Document";
+        settings.UseControllerSummaryAsTagDescription = true;
+        settings.SchemaSettings.TypeMappers.Add(new OpenApiDateTimeOffsetToUIntMapper());
+        settings.SchemaSettings.ReflectionService = new GenericsSystemTextJsonReflectionService();
+    });
 
 #endregion OpenApiDocument
 
@@ -197,9 +227,16 @@ builder.Services.Configure<DataProtectionTokenProviderOptions>(o =>
 
 #endregion Identity
 
+#region Telemetry
+
+var telemetryOptions = builder.Configuration.GetSection("Telemetry").Get<TelemetryConfig>();
+builder.Services.AddTelemetry(telemetryOptions);
+
+#endregion
+
 #region Services and Repositories
 
-builder.Services.AddTransient<IMailSender, MailSender>()
+builder.Services.AddSingleton<IMailSender, MailSender>()
     .Configure<EmailConfig>(builder.Configuration.GetSection(nameof(EmailConfig)));
 
 builder.Services.Configure<RegistryConfig>(builder.Configuration.GetSection(nameof(RegistryConfig)));
@@ -223,7 +260,7 @@ builder.Services.AddContainerService(builder.Configuration);
 
 builder.Services.AddScoped<IConfigService, ConfigService>();
 builder.Services.AddScoped<ILogRepository, LogRepository>();
-builder.Services.AddScoped<IFileRepository, FileRepository>();
+builder.Services.AddScoped<IBlobRepository, BlobRepository>();
 builder.Services.AddScoped<IPostRepository, PostRepository>();
 builder.Services.AddScoped<IGameRepository, GameRepository>();
 builder.Services.AddScoped<ITeamRepository, TeamRepository>();
@@ -248,15 +285,19 @@ builder.Services.AddHostedService<CacheMaker>();
 builder.Services.AddHostedService<FlagChecker>();
 builder.Services.AddHostedService<CronJobService>();
 
-builder.Services.AddHealthChecks();
 builder.Services.AddRateLimiter(RateLimiter.ConfigureRateLimiter);
 builder.Services.AddResponseCompression(options =>
 {
+    options.Providers.Add<ZStandardCompressionProvider>();
     options.Providers.Add<BrotliCompressionProvider>();
     options.Providers.Add<GzipCompressionProvider>();
     options.MimeTypes = ResponseCompressionDefaults.MimeTypes.Concat(
-        ["application/json", "text/javascript", "text/html", "text/css"]
+        [
+            // See others in ResponseCompressionDefaults.MimeTypes
+            MediaTypeNames.Application.Pdf
+        ]
     );
+    options.EnableForHttps = true;
 });
 
 builder.Services.AddControllersWithViews().ConfigureApiBehaviorOptions(options =>
@@ -266,9 +307,24 @@ builder.Services.AddControllersWithViews().ConfigureApiBehaviorOptions(options =
 {
     options.DataAnnotationLocalizerProvider = (_, factory) =>
         factory.Create(typeof(GZCTF.Resources.Program));
+}).AddJsonOptions(options =>
+{
+    options.JsonSerializerOptions.TypeInfoResolverChain.Insert(0, AppJsonSerializerContext.Default);
+    options.JsonSerializerOptions.Converters.Add(new DateTimeOffsetJsonConverter());
 });
+builder.Services.AddResponseCaching();
 
 #endregion Services and Repositories
+
+#region Health Checks
+
+builder.Services.AddHealthChecks()
+    .AddApplicationLifecycleHealthCheck()
+    .AddCheck<StorageHealthCheck>("Storage")
+    .AddCheck<CacheHealthCheck>("Cache")
+    .AddCheck<DatabaseHealthCheck>("Database");
+
+#endregion
 
 #region Middlewares
 
@@ -280,8 +336,10 @@ await app.RunPrelaunchWork();
 
 app.UseRequestLocalization();
 
+app.UseResponseCaching();
 app.UseResponseCompression();
 
+app.UseCustomFavicon();
 app.UseStaticFiles(new StaticFileOptions
 {
     OnPrepareResponse = ctx =>
@@ -298,8 +356,10 @@ if (app.Environment.IsDevelopment())
     app.UseOpenApi(options =>
     {
         options.PostProcess += (document, _) => document.Servers.Clear();
+        options.Path = "/openapi/{documentName}.json";
     });
-    app.UseSwaggerUi();
+    // open ui in `/scalar/v1`
+    app.MapScalarApiReference();
 }
 else
 {
@@ -309,25 +369,26 @@ else
 
 app.UseRouting();
 
-app.UseAuthentication();
-app.UseAuthorization();
-
 if (app.Configuration.GetValue<bool>("DisableRateLimit") is not true)
     app.UseRateLimiter();
+
+app.UseAuthentication();
+app.UseAuthorization();
 
 if (app.Environment.IsDevelopment() || app.Configuration.GetValue<bool>("RequestLogging"))
     app.UseRequestLogging();
 
 app.UseWebSockets(new() { KeepAliveInterval = TimeSpan.FromMinutes(30) });
+app.UseTelemetry(telemetryOptions);
 
-app.MapHealthChecks("/healthz");
+app.MapHealthChecks("/healthz").DisableHttpMetrics();
 app.MapControllers();
 
 app.MapHub<UserHub>("/hub/user");
 app.MapHub<MonitorHub>("/hub/monitor");
 app.MapHub<AdminHub>("/hub/admin");
 
-app.MapFallbackToFile("index.html");
+await app.UseIndexAsync();
 
 #endregion Middlewares
 
@@ -356,13 +417,43 @@ namespace GZCTF
 {
     public class Program
     {
-        public static bool IsTesting { get; set; }
+        [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(DesignTimeAppDbContextFactory))]
+        static Program()
+        {
+            using Stream stream = typeof(Program).Assembly
+                .GetManifestResourceStream("GZCTF.Resources.favicon.webp")!;
+            DefaultFavicon = new byte[stream.Length];
+
+            stream.ReadExactly(DefaultFavicon);
+            DefaultFaviconHash = Convert.ToHexStringLower(SHA256.HashData(DefaultFavicon));
+        }
+
+        internal static readonly string[] SupportedCultures =
+        [
+            "en-US",
+            "zh-CN",
+            "zh-TW",
+            "ja-JP",
+            "id-ID",
+            "ko-KR",
+            "ru-RU",
+            "de-DE",
+            "fr-FR",
+            "es-ES",
+            "vi-VN"
+        ];
 
         internal static IStringLocalizer<Program> StaticLocalizer { get; } =
             new CulturedLocalizer<Program>(CultureInfo.CurrentCulture);
 
+        internal static byte[] DefaultFavicon { get; }
+        internal static string DefaultFaviconHash { get; }
+
         internal static void Banner()
         {
+            // The GZCTF identifier is protected by the License.
+            // DO NOT REMOVE OR MODIFY THE FOLLOWING LINE.
+            // Please see LICENSE_ADDENDUM.txt for details.
             const string banner =
                 """
                       ___           ___           ___                       ___
@@ -386,6 +477,13 @@ namespace GZCTF
 
             // ReSharper disable once LocalizableElement
             Console.WriteLine($"GZCTF © 2022-present GZTimeWalker {versionStr,33}\n");
+
+            // Show warning if a language is machine translated
+            string[] machineTranslated = ["de-DE", "fr-FR", "es-ES"];
+            if (machineTranslated.Contains(CultureInfo.CurrentCulture.Name))
+                // ReSharper disable once LocalizableElement
+                Console.WriteLine(
+                    $"Warning: Current language {CultureInfo.CurrentCulture.DisplayName} is machine translated and may not be accurate.\n");
         }
 
         public static void ExitWithFatalMessage(string msg)
@@ -397,21 +495,19 @@ namespace GZCTF
 
         public static IActionResult InvalidModelStateHandler(ActionContext context)
         {
-            string? errors = null;
             var localizer = context.HttpContext.RequestServices.GetRequiredService<IStringLocalizer<Program>>();
             if (context.ModelState.ErrorCount <= 0)
-                return new JsonResult(
-                    new RequestResponse(errors is [_, ..]
-                        ? errors
-                        : localizer[nameof(Resources.Program.Model_ValidationFailed)])) { StatusCode = 400 };
+                return new JsonResult(new RequestResponse(
+                    localizer[nameof(Resources.Program.Model_ValidationFailed)]))
+                { StatusCode = 400 };
 
-            errors = (from val in context.ModelState.Values
-                where val.Errors.Count > 0
-                select val.Errors.FirstOrDefault()?.ErrorMessage).FirstOrDefault();
+            var error = context.ModelState.Values.Where(v => v.Errors.Count > 0)
+                .Select(v => v.Errors.FirstOrDefault()?.ErrorMessage).FirstOrDefault();
 
-            return new JsonResult(new RequestResponse(errors is [_, ..]
-                ? errors
-                : localizer[nameof(Resources.Program.Model_ValidationFailed)])) { StatusCode = 400 };
+            return new JsonResult(new RequestResponse(error is [_, ..]
+                ? error
+                : localizer[nameof(Resources.Program.Model_ValidationFailed)]))
+            { StatusCode = 400 };
         }
     }
 }

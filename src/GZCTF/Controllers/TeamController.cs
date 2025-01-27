@@ -14,29 +14,31 @@ using Org.BouncyCastle.Crypto.Parameters;
 namespace GZCTF.Controllers;
 
 /// <summary>
-/// 队伍数据交互接口
+/// Team related APIs
 /// </summary>
 [ApiController]
 [Route("api/[controller]")]
 [Produces(MediaTypeNames.Application.Json)]
 public partial class TeamController(
     UserManager<UserInfo> userManager,
-    IFileRepository fileService,
+    IBlobRepository blobService,
     ILogger<TeamController> logger,
     ITeamRepository teamRepository,
     IParticipationRepository participationRepository,
     IStringLocalizer<Program> localizer) : ControllerBase
 {
+    const int MaxTeamsAllowed = 3;
+
     /// <summary>
-    /// 获取队伍信息
+    /// Get team information
     /// </summary>
     /// <remarks>
-    /// 根据 id 获取一个队伍的基本信息
+    /// Get basic information of a team by ID
     /// </remarks>
-    /// <param name="id">队伍id</param>
+    /// <param name="id">Team ID</param>
     /// <param name="token"></param>
-    /// <response code="200">成功获取队伍信息</response>
-    /// <response code="400">队伍不存在</response>
+    /// <response code="200">Successfully retrieved team information</response>
+    /// <response code="400">Team does not exist</response>
     [HttpGet("{id:int}")]
     [ProducesResponseType(typeof(TeamInfoModel), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(RequestResponse), StatusCodes.Status400BadRequest)]
@@ -52,14 +54,14 @@ public partial class TeamController(
     }
 
     /// <summary>
-    /// 获取当前自己队伍信息
+    /// Get current team information
     /// </summary>
     /// <remarks>
-    /// 根据用户获取一个队伍的基本信息
+    /// Get basic information of a team based on user
     /// </remarks>
     /// <param name="token"></param>
-    /// <response code="200">成功获取队伍信息</response>
-    /// <response code="400">队伍不存在</response>
+    /// <response code="200">Successfully retrieved team information</response>
+    /// <response code="400">Team does not exist</response>
     [HttpGet]
     [RequireUser]
     [ProducesResponseType(typeof(TeamInfoModel[]), StatusCodes.Status200OK)]
@@ -72,15 +74,15 @@ public partial class TeamController(
     }
 
     /// <summary>
-    /// 创建队伍
+    /// Create team
     /// </summary>
     /// <remarks>
-    /// 用户创建队伍接口，每个用户只能创建一个队伍
+    /// User API for creating teams, each user can only create one team
     /// </remarks>
     /// <param name="model"></param>
     /// <param name="token"></param>
-    /// <response code="200">成功获取队伍信息</response>
-    /// <response code="400">队伍不存在</response>
+    /// <response code="200">Successfully retrieved team information</response>
+    /// <response code="400">Team does not exist</response>
     [HttpPost]
     [RequireUser]
     [EnableRateLimiting(nameof(RateLimiter.LimitPolicy.Concurrency))]
@@ -94,9 +96,9 @@ public partial class TeamController(
 
         Team[] teams = await teamRepository.GetUserTeams(user!, token);
 
-        if (teams.Length > 1 && teams.Any(t => t.CaptainId == user!.Id))
+        if (teams.Count(t => t.CaptainId == user!.Id) >= MaxTeamsAllowed)
             return BadRequest(
-                new RequestResponse(localizer[nameof(Resources.Program.Team_MultipleCreationNotAllowed)]));
+                new RequestResponse(localizer[nameof(Resources.Program.Team_ExceededCreationLimit)]));
 
         if (string.IsNullOrEmpty(model.Name))
             return BadRequest(new RequestResponse(localizer[nameof(Resources.Program.Team_NameEmpty)]));
@@ -115,18 +117,18 @@ public partial class TeamController(
     }
 
     /// <summary>
-    /// 更改队伍信息
+    /// Update team information
     /// </summary>
     /// <remarks>
-    /// 队伍信息更改接口，需要为队伍创建者
+    /// Team information update API, must be team creator
     /// </remarks>
-    /// <param name="id">队伍Id</param>
+    /// <param name="id">Team ID</param>
     /// <param name="model"></param>
     /// <param name="token"></param>
-    /// <response code="200">成功获取队伍信息</response>
-    /// <response code="400">队伍不存在</response>
-    /// <response code="401">未授权</response>
-    /// <response code="403">无权操作</response>
+    /// <response code="200">Successfully retrieved team information</response>
+    /// <response code="400">Team does not exist</response>
+    /// <response code="401">Unauthorized</response>
+    /// <response code="403">Access forbidden</response>
     [RequireUser]
     [HttpPut("{id:int}")]
     [ProducesResponseType(typeof(TeamInfoModel), StatusCodes.Status200OK)]
@@ -144,7 +146,8 @@ public partial class TeamController(
 
         if (team.CaptainId != user!.Id)
             return new JsonResult(new RequestResponse(localizer[nameof(Resources.Program.Auth_AccessForbidden)],
-                StatusCodes.Status403Forbidden)) { StatusCode = StatusCodes.Status403Forbidden };
+                StatusCodes.Status403Forbidden))
+            { StatusCode = StatusCodes.Status403Forbidden };
 
         team.UpdateInfo(model);
 
@@ -154,18 +157,18 @@ public partial class TeamController(
     }
 
     /// <summary>
-    /// 移交队伍所有权
+    /// Transfer team ownership
     /// </summary>
     /// <remarks>
-    /// 移交队伍所有权接口，需要为队伍创建者
+    /// Team ownership transfer API, must be team creator
     /// </remarks>
-    /// <param name="id">队伍Id</param>
+    /// <param name="id">Team ID</param>
     /// <param name="model"></param>
     /// <param name="token"></param>
-    /// <response code="200">成功获取队伍信息</response>
-    /// <response code="400">队伍不存在</response>
-    /// <response code="401">未授权</response>
-    /// <response code="403">无权操作</response>
+    /// <response code="200">Successfully retrieved team information</response>
+    /// <response code="400">Team does not exist</response>
+    /// <response code="401">Unauthorized</response>
+    /// <response code="403">Access forbidden</response>
     [RequireUser]
     [HttpPut("{id:int}/Transfer")]
     [ProducesResponseType(typeof(TeamInfoModel), StatusCodes.Status200OK)]
@@ -176,45 +179,55 @@ public partial class TeamController(
         CancellationToken token)
     {
         UserInfo? user = await userManager.GetUserAsync(User);
-        Team? team = await teamRepository.GetTeamById(id, token);
 
-        if (team is null)
-            return BadRequest(new RequestResponse(localizer[nameof(Resources.Program.Team_NotFound)]));
+        IDbContextTransaction trans = await teamRepository.BeginTransactionAsync(token);
 
-        if (team.CaptainId != user!.Id)
-            return new JsonResult(new RequestResponse(localizer[nameof(Resources.Program.Auth_AccessForbidden)],
-                StatusCodes.Status403Forbidden)) { StatusCode = StatusCodes.Status403Forbidden };
+        try
+        {
+            Team? team = await teamRepository.GetTeamById(id, token);
 
-        if (team.Locked && await teamRepository.AnyActiveGame(team, token))
-            return BadRequest(new RequestResponse(localizer[nameof(Resources.Program.Team_Locked)]));
+            if (team is null)
+                return BadRequest(new RequestResponse(localizer[nameof(Resources.Program.Team_NotFound)]));
 
-        UserInfo? newCaptain = await userManager.Users.SingleOrDefaultAsync(u => u.Id == model.NewCaptainId, token);
+            if (team.CaptainId != user!.Id)
+                return new JsonResult(new RequestResponse(localizer[nameof(Resources.Program.Auth_AccessForbidden)],
+                    StatusCodes.Status403Forbidden))
+                { StatusCode = StatusCodes.Status403Forbidden };
 
-        if (newCaptain is null)
-            return BadRequest(new RequestResponse(localizer[nameof(Resources.Program.Team_NewCaptainNotFound)]));
+            UserInfo? newCaptain = await userManager.Users.SingleOrDefaultAsync(u => u.Id == model.NewCaptainId, token);
 
-        Team[] newCaptainTeams = await teamRepository.GetUserTeams(newCaptain, token);
+            if (newCaptain is null)
+                return BadRequest(new RequestResponse(localizer[nameof(Resources.Program.Team_NewCaptainNotFound)]));
 
-        if (newCaptainTeams.Count(t => t.CaptainId == newCaptain.Id) >= 3)
-            return BadRequest(new RequestResponse(localizer[nameof(Resources.Program.Team_NewCaptainTeamTooMany)]));
+            Team[] newCaptainTeams = await teamRepository.GetUserTeams(newCaptain, token);
 
-        await teamRepository.Transfer(team, newCaptain, token);
+            if (newCaptainTeams.Count(t => t.CaptainId == newCaptain.Id) >= MaxTeamsAllowed)
+                return BadRequest(new RequestResponse(localizer[nameof(Resources.Program.Team_NewCaptainTeamTooMany)]));
 
-        return Ok(TeamInfoModel.FromTeam(team));
+            await teamRepository.Transfer(team, newCaptain, token);
+            await trans.CommitAsync(token);
+
+            return Ok(TeamInfoModel.FromTeam(team));
+        }
+        catch
+        {
+            await trans.RollbackAsync(token);
+            throw;
+        }
     }
 
     /// <summary>
-    /// 获取邀请信息
+    /// Get invitation information
     /// </summary>
     /// <remarks>
-    /// 获取队伍邀请信息，需要为队伍创建者
+    /// Get team invitation information, must be team creator
     /// </remarks>
-    /// <param name="id">队伍Id</param>
+    /// <param name="id">Team ID</param>
     /// <param name="token"></param>
-    /// <response code="200">成功获取队伍Token</response>
-    /// <response code="400">队伍不存在</response>
-    /// <response code="401">未授权</response>
-    /// <response code="403">无权操作</response>
+    /// <response code="200">Successfully retrieved team token</response>
+    /// <response code="400">Team does not exist</response>
+    /// <response code="401">Unauthorized</response>
+    /// <response code="403">Access forbidden</response>
     [RequireUser]
     [HttpGet("{id:int}/Invite")]
     [ProducesResponseType(typeof(string), StatusCodes.Status200OK)]
@@ -231,23 +244,24 @@ public partial class TeamController(
 
         if (team.CaptainId != user!.Id)
             return new JsonResult(new RequestResponse(localizer[nameof(Resources.Program.Auth_AccessForbidden)],
-                StatusCodes.Status403Forbidden)) { StatusCode = StatusCodes.Status403Forbidden };
+                StatusCodes.Status403Forbidden))
+            { StatusCode = StatusCodes.Status403Forbidden };
 
         return Ok(team.InviteCode);
     }
 
     /// <summary>
-    /// 更新邀请 Token
+    /// Update invitation token
     /// </summary>
     /// <remarks>
-    /// 更新邀请 Token 的接口，需要为队伍创建者
+    /// Interface to update invitation token, must be team creator
     /// </remarks>
-    /// <param name="id">队伍Id</param>
+    /// <param name="id">Team ID</param>
     /// <param name="token"></param>
-    /// <response code="200">成功获取队伍Token</response>
-    /// <response code="400">队伍不存在</response>
-    /// <response code="401">未授权</response>
-    /// <response code="403">无权操作</response>
+    /// <response code="200">Successfully retrieved team token</response>
+    /// <response code="400">Team does not exist</response>
+    /// <response code="401">Unauthorized</response>
+    /// <response code="403">Access forbidden</response>
     [RequireUser]
     [HttpPut("{id:int}/Invite")]
     [ProducesResponseType(typeof(string), StatusCodes.Status200OK)]
@@ -264,7 +278,8 @@ public partial class TeamController(
 
         if (team.CaptainId != user!.Id)
             return new JsonResult(new RequestResponse(localizer[nameof(Resources.Program.Auth_AccessForbidden)],
-                StatusCodes.Status403Forbidden)) { StatusCode = StatusCodes.Status403Forbidden };
+                StatusCodes.Status403Forbidden))
+            { StatusCode = StatusCodes.Status403Forbidden };
 
         team.UpdateInviteToken();
 
@@ -274,18 +289,18 @@ public partial class TeamController(
     }
 
     /// <summary>
-    /// 踢除用户接口
+    /// Kick user
     /// </summary>
     /// <remarks>
-    /// 踢除用户接口，踢出对应id的用户，需要队伍创建者权限
+    /// User kick API, kick user with corresponding ID, requires team creator permission
     /// </remarks>
-    /// <param name="id">队伍Id</param>
-    /// <param name="userId">被踢除用户Id</param>
+    /// <param name="id">Team ID</param>
+    /// <param name="userId">ID of user to be kicked</param>
     /// <param name="token"></param>
-    /// <response code="200">成功获取队伍Token</response>
-    /// <response code="400">队伍不存在</response>
-    /// <response code="401">未授权</response>
-    /// <response code="403">无权操作</response>
+    /// <response code="200">Successfully retrieved team token</response>
+    /// <response code="400">Team does not exist</response>
+    /// <response code="401">Unauthorized</response>
+    /// <response code="403">Access forbidden</response>
     [RequireUser]
     [HttpPost("{id:int}/Kick/{userId:guid}")]
     [ProducesResponseType(typeof(TeamInfoModel), StatusCodes.Status200OK)]
@@ -295,19 +310,21 @@ public partial class TeamController(
     public async Task<IActionResult> KickUser([FromRoute] int id, [FromRoute] Guid userId, CancellationToken token)
     {
         UserInfo? user = await userManager.GetUserAsync(User);
-        Team? team = await teamRepository.GetTeamById(id, token);
-
-        if (team is null)
-            return BadRequest(new RequestResponse(localizer[nameof(Resources.Program.Team_NotFound)]));
-
-        if (team.CaptainId != user!.Id)
-            return new JsonResult(new RequestResponse(localizer[nameof(Resources.Program.Auth_AccessForbidden)],
-                StatusCodes.Status403Forbidden)) { StatusCode = StatusCodes.Status403Forbidden };
 
         IDbContextTransaction trans = await teamRepository.BeginTransactionAsync(token);
 
         try
         {
+            Team? team = await teamRepository.GetTeamById(id, token);
+
+            if (team is null)
+                return BadRequest(new RequestResponse(localizer[nameof(Resources.Program.Team_NotFound)]));
+
+            if (team.CaptainId != user!.Id)
+                return new JsonResult(new RequestResponse(localizer[nameof(Resources.Program.Auth_AccessForbidden)],
+                    StatusCodes.Status403Forbidden))
+                { StatusCode = StatusCodes.Status403Forbidden };
+
             if (team.Locked && await teamRepository.AnyActiveGame(team, token))
                 return BadRequest(new RequestResponse(localizer[nameof(Resources.Program.Team_Locked)]));
 
@@ -338,17 +355,17 @@ public partial class TeamController(
     private static partial Regex InviteCodeRegex();
 
     /// <summary>
-    /// 接受邀请
+    /// Accept invitation
     /// </summary>
     /// <remarks>
-    /// 接受邀请的接口，需要User权限，且不在队伍中
+    /// Interface to accept invitation, requires User permission and not being in team
     /// </remarks>
-    /// <param name="code">队伍邀请Token</param>
+    /// <param name="code">Team invitation token</param>
     /// <param name="cancelToken"></param>
-    /// <response code="200">接受队伍邀请</response>
-    /// <response code="400">队伍不存在</response>
-    /// <response code="401">未授权</response>
-    /// <response code="403">无权操作</response>
+    /// <response code="200">Accepted team invitation</response>
+    /// <response code="400">Team does not exist</response>
+    /// <response code="401">Unauthorized</response>
+    /// <response code="403">Access forbidden</response>
     [RequireUser]
     [HttpPost("Accept")]
     [ProducesResponseType(StatusCodes.Status200OK)]
@@ -384,9 +401,6 @@ public partial class TeamController(
                 return BadRequest(new RequestResponse(localizer[nameof(Resources.Program.Team_NameInvalidInvitation),
                     teamName]));
 
-            if (team.Locked && await teamRepository.AnyActiveGame(team, cancelToken))
-                return BadRequest(new RequestResponse(localizer[nameof(Resources.Program.Team_NameLocked), teamName]));
-
             UserInfo? user = await userManager.GetUserAsync(User);
 
             if (team.Members.Any(m => m.Id == user!.Id))
@@ -409,17 +423,17 @@ public partial class TeamController(
     }
 
     /// <summary>
-    /// 离开队伍
+    /// Leave team
     /// </summary>
     /// <remarks>
-    /// 离开队伍的接口，需要User权限，且在队伍中
+    /// Interface to leave team, requires User permission and being in team
     /// </remarks>
-    /// <param name="id">队伍Id</param>
+    /// <param name="id">Team ID</param>
     /// <param name="token"></param>
-    /// <response code="200">成功离开队伍</response>
-    /// <response code="400">队伍不存在</response>
-    /// <response code="401">未授权</response>
-    /// <response code="403">无权操作</response>
+    /// <response code="200">Successfully left team</response>
+    /// <response code="400">Team does not exist</response>
+    /// <response code="401">Unauthorized</response>
+    /// <response code="403">Access forbidden</response>
     [RequireUser]
     [HttpPost("{id:int}/Leave")]
     [ProducesResponseType(StatusCodes.Status200OK)]
@@ -464,14 +478,14 @@ public partial class TeamController(
     }
 
     /// <summary>
-    /// 更新队伍头像接口
+    /// Update team avatar
     /// </summary>
     /// <remarks>
-    /// 使用此接口更新队伍头像，需要User权限，且为队伍成员
+    /// Use this API to update team avatar, requires User permission and team membership
     /// </remarks>
-    /// <response code="200">用户头像URL</response>
-    /// <response code="400">非法请求</response>
-    /// <response code="401">未授权用户</response>
+    /// <response code="200">User avatar URL</response>
+    /// <response code="400">Invalid request</response>
+    /// <response code="401">Unauthorized user</response>
     [RequireUser]
     [HttpPut("{id:int}/Avatar")]
     [ProducesResponseType(typeof(string), StatusCodes.Status200OK)]
@@ -489,18 +503,21 @@ public partial class TeamController(
 
         if (team.CaptainId != user!.Id)
             return new JsonResult(new RequestResponse(localizer[nameof(Resources.Program.Auth_AccessForbidden)],
-                StatusCodes.Status403Forbidden)) { StatusCode = StatusCodes.Status403Forbidden };
+                StatusCodes.Status403Forbidden))
+            { StatusCode = StatusCodes.Status403Forbidden };
 
-        if (file.Length == 0)
-            return BadRequest(new RequestResponse(localizer[nameof(Resources.Program.File_SizeZero)]));
-
-        if (file.Length > 3 * 1024 * 1024)
-            return BadRequest(new RequestResponse(localizer[nameof(Resources.Program.File_SizeTooLarge)]));
+        switch (file.Length)
+        {
+            case 0:
+                return BadRequest(new RequestResponse(localizer[nameof(Resources.Program.File_SizeZero)]));
+            case > 3 * 1024 * 1024:
+                return BadRequest(new RequestResponse(localizer[nameof(Resources.Program.File_SizeTooLarge)]));
+        }
 
         if (team.AvatarHash is not null)
-            _ = await fileService.DeleteFileByHash(team.AvatarHash, token);
+            _ = await blobService.DeleteBlobByHash(team.AvatarHash, token);
 
-        LocalFile? avatar = await fileService.CreateOrUpdateImage(file, "avatar", 300, token);
+        LocalFile? avatar = await blobService.CreateOrUpdateImage(file, "avatar", 300, token);
 
         if (avatar is null)
             return BadRequest(new RequestResponse(localizer[nameof(Resources.Program.Team_AvatarUpdateFailed)]));
@@ -515,15 +532,15 @@ public partial class TeamController(
     }
 
     /// <summary>
-    /// 删除队伍
+    /// Delete team
     /// </summary>
     /// <remarks>
-    /// 用户删除队伍接口，需要User权限，且为队伍队长
+    /// User API for deleting team, requires User permission and team captain status
     /// </remarks>
-    /// <param name="id">队伍Id</param>
+    /// <param name="id">Team ID</param>
     /// <param name="token"></param>
-    /// <response code="200">成功获取队伍信息</response>
-    /// <response code="400">队伍不存在</response>
+    /// <response code="200">Successfully retrieved team information</response>
+    /// <response code="400">Team does not exist</response>
     [RequireUser]
     [HttpDelete("{id:int}")]
     [ProducesResponseType(typeof(TeamInfoModel), StatusCodes.Status200OK)]
@@ -541,27 +558,29 @@ public partial class TeamController(
 
         if (team.CaptainId != user!.Id)
             return new JsonResult(new RequestResponse(localizer[nameof(Resources.Program.Auth_AccessForbidden)],
-                StatusCodes.Status403Forbidden)) { StatusCode = StatusCodes.Status403Forbidden };
+                StatusCodes.Status403Forbidden))
+            { StatusCode = StatusCodes.Status403Forbidden };
 
         if (team.Locked && await teamRepository.AnyActiveGame(team, token))
             return BadRequest(new RequestResponse(localizer[nameof(Resources.Program.Team_Locked)]));
 
         await teamRepository.DeleteTeam(team, token);
 
-        logger.Log(Program.StaticLocalizer[nameof(Resources.Program.Team_Deleted)], user, TaskStatus.Success);
+        logger.Log(Program.StaticLocalizer[nameof(Resources.Program.Team_Deleted), team.Name], user,
+            TaskStatus.Success);
 
         return Ok();
     }
 
     /// <summary>
-    /// 进行签名校验
+    /// Verify signature
     /// </summary>
     /// <remarks>
-    /// 进行签名校验
+    /// Perform signature verification
     /// </remarks>
-    /// <response code="200">签名有效</response>
-    /// <response code="400">输入格式错误</response>
-    /// <response code="401">签名无效</response>
+    /// <response code="200">Signature valid</response>
+    /// <response code="400">Input format error</response>
+    /// <response code="401">Signature invalid</response>
     [HttpPost("Verify")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(RequestResponse), StatusCodes.Status400BadRequest)]

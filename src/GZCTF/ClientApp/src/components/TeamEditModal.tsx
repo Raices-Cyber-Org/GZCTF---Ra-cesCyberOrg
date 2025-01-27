@@ -27,8 +27,9 @@ import { Icon } from '@mdi/react'
 import { FC, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { showErrorNotification, tryGetErrorMsg } from '@Utils/ApiHelper'
-import { ACCEPT_IMAGE_MIME_TYPE } from '@Utils/ThemeOverride'
+import { IMAGE_MIME_TYPES } from '@Utils/Shared'
 import api, { TeamInfoModel, TeamUserInfoModel } from '@Api'
+import misc from '@Styles/Misc.module.css'
 
 interface TeamEditModalProps extends ModalProps {
   team: TeamInfoModel | null
@@ -50,19 +51,15 @@ const TeamMemberInfo: FC<TeamMemberInfoProps> = (props) => {
   const { t } = useTranslation()
 
   return (
-    <Group
-      position="apart"
-      onMouseEnter={() => setShowBtns(true)}
-      onMouseLeave={() => setShowBtns(false)}
-    >
-      <Group position="left">
+    <Group justify="space-between" onMouseEnter={() => setShowBtns(true)} onMouseLeave={() => setShowBtns(false)}>
+      <Group justify="left">
         <Avatar alt="avatar" src={user.avatar} radius="xl">
           {user.userName?.slice(0, 1) ?? 'U'}
         </Avatar>
         <Text fw={500}>{user.userName}</Text>
       </Group>
       {isCaptain && showBtns && (
-        <Group spacing="xs" position="right">
+        <Group gap="xs" justify="right">
           <Tooltip label={t('team.label.transfer')}>
             <ActionIcon variant="transparent" onClick={() => onTransferCaptain(user)}>
               <Icon path={mdiStar} size={1} color={theme.colors.yellow[4]} />
@@ -79,7 +76,7 @@ const TeamMemberInfo: FC<TeamMemberInfoProps> = (props) => {
   )
 }
 
-const TeamEditModal: FC<TeamEditModalProps> = (props) => {
+export const TeamEditModal: FC<TeamEditModalProps> = (props) => {
   const { team, isCaptain, ...modalProps } = props
 
   const teamId = team?.id
@@ -105,115 +102,125 @@ const TeamEditModal: FC<TeamEditModalProps> = (props) => {
   }, [team])
 
   useEffect(() => {
-    if (isCaptain && !inviteCode && teamId) {
-      api.team.teamInviteCode(teamId).then((code) => {
-        setInviteCode(code.data)
-      })
+    const fetchCode = async () => {
+      if (!isCaptain || !teamId || inviteCode) return
+
+      const code = await api.team.teamInviteCode(teamId!)
+      setInviteCode(code.data)
     }
+
+    fetchCode()
   }, [inviteCode, isCaptain, teamId])
 
-  const onConfirmLeaveTeam = () => {
+  const onConfirmLeaveTeam = async () => {
     if (!teamInfo || isCaptain) return
 
-    api.team
-      .teamLeave(teamInfo.id!)
-      .then(() => {
-        showNotification({
-          color: 'teal',
-          title: t('team.notification.leave.success'),
-          message: t('team.notification.updated'),
-          icon: <Icon path={mdiCheck} size={1} />,
-        })
-        mutateTeams(teams?.filter((x) => x.id !== teamInfo?.id))
-        props.onClose()
+    try {
+      await api.team.teamLeave(teamInfo.id!)
+      showNotification({
+        color: 'teal',
+        title: t('team.notification.leave.success'),
+        message: t('team.notification.updated'),
+        icon: <Icon path={mdiCheck} size={1} />,
       })
-      .catch((e) => showErrorNotification(e, t))
+      mutateTeams(
+        teams?.filter((x) => x.id !== teamInfo.id),
+        { revalidate: false }
+      )
+      setInviteCode('')
+      setTeamInfo(null)
+      props.onClose()
+    } catch (e) {
+      showErrorNotification(e, t)
+    }
   }
 
-  const onConfirmDisbandTeam = () => {
+  const onConfirmDisbandTeam = async () => {
     if (!teamInfo || !isCaptain) return
-    api.team
-      .teamDeleteTeam(teamInfo.id!)
-      .then(() => {
-        showNotification({
-          color: 'teal',
-          title: t('team.notification.disband.success'),
-          message: t('team.notification.updated'),
-          icon: <Icon path={mdiCheck} size={1} />,
-        })
-        setInviteCode('')
-        setTeamInfo(null)
-        mutateTeams(
-          teams?.filter((x) => x.id !== teamInfo.id),
-          { revalidate: false }
-        )
-        props.onClose()
+
+    try {
+      await api.team.teamDeleteTeam(teamInfo.id!)
+      showNotification({
+        color: 'teal',
+        title: t('team.notification.disband.success'),
+        message: t('team.notification.updated'),
+        icon: <Icon path={mdiCheck} size={1} />,
       })
-      .catch((e) => showErrorNotification(e, t))
+      setInviteCode('')
+      setTeamInfo(null)
+      mutateTeams(
+        teams?.filter((x) => x.id !== teamInfo.id),
+        { revalidate: false }
+      )
+      props.onClose()
+    } catch (e) {
+      showErrorNotification(e, t)
+    }
   }
 
-  const onTransferCaptain = (userId: string) => {
+  const onTransferCaptain = async (userId: string) => {
     if (!teamInfo || !isCaptain) return
-    api.team
-      .teamTransfer(teamInfo.id!, {
+
+    try {
+      await api.team.teamTransfer(teamInfo.id!, {
         newCaptainId: userId,
       })
-      .then((team) => {
-        showNotification({
-          color: 'teal',
-          title: t('team.notification.transfer.success'),
-          message: t('team.notification.updated'),
-          icon: <Icon path={mdiCheck} size={1} />,
-        })
-        setTeamInfo(team.data)
-        mutateTeams(
-          teams?.map((x) => (x.id === teamInfo.id ? team.data : x)),
-          {
-            revalidate: false,
-          }
-        )
+      showNotification({
+        color: 'teal',
+        title: t('team.notification.transfer.success'),
+        message: t('team.notification.updated'),
+        icon: <Icon path={mdiCheck} size={1} />,
       })
-      .catch((e) => showErrorNotification(e, t))
+      mutateTeams(
+        teams?.map((x) => (x.id === teamInfo.id ? teamInfo : x)),
+        {
+          revalidate: false,
+        }
+      )
+    } catch (e) {
+      showErrorNotification(e, t)
+    }
   }
 
-  const onConfirmKickUser = (userId: string) => {
-    api.team
-      .teamKickUser(teamInfo?.id!, userId)
-      .then((data) => {
-        showNotification({
-          color: 'teal',
-          title: t('team.notification.kick.success'),
-          message: t('team.notification.updated'),
-          icon: <Icon path={mdiCheck} size={1} />,
-        })
-        setTeamInfo(data.data)
-        mutateTeams(
-          teams?.map((x) => (x.id === teamInfo?.id ? data.data : x)),
-          {
-            revalidate: false,
-          }
-        )
+  const onConfirmKickUser = async (userId: string) => {
+    if (!teamInfo?.id || !isCaptain) return
+
+    try {
+      await api.team.teamKickUser(teamInfo.id, userId)
+      showNotification({
+        color: 'teal',
+        title: t('team.notification.kick.success'),
+        message: t('team.notification.updated'),
+        icon: <Icon path={mdiCheck} size={1} />,
       })
-      .catch((e) => showErrorNotification(e, t))
+      mutateTeams(
+        teams?.map((x) => (x.id === teamInfo.id ? teamInfo : x)),
+        {
+          revalidate: false,
+        }
+      )
+    } catch (e) {
+      showErrorNotification(e, t)
+    }
   }
 
-  const onRefreshInviteCode = () => {
-    if (!inviteCode) return
+  const onRefreshInviteCode = async () => {
+    if (!inviteCode || !team?.id) return
 
-    api.team
-      .teamUpdateInviteToken(team?.id!)
-      .then((data) => {
-        setInviteCode(data.data)
-        showNotification({
-          color: 'teal',
-          message: t('team.notification.invite_code.updated'),
-          icon: <Icon path={mdiCheck} size={1} />,
-        })
+    try {
+      const code = await api.team.teamUpdateInviteToken(team.id)
+      setInviteCode(code.data)
+      showNotification({
+        color: 'teal',
+        message: t('team.notification.invite_code.updated'),
+        icon: <Icon path={mdiCheck} size={1} />,
       })
-      .catch((e) => showErrorNotification(e, t))
+    } catch (e) {
+      showErrorNotification(e, t)
+    }
   }
 
-  const onChangeAvatar = () => {
+  const onChangeAvatar = async () => {
     if (!avatarFile || !teamInfo?.id) return
     setDisabled(true)
     notifications.clean()
@@ -225,62 +232,62 @@ const TeamEditModal: FC<TeamEditModalProps> = (props) => {
       autoClose: false,
     })
 
-    api.team
-      .teamAvatar(teamInfo?.id, {
+    try {
+      const data = await api.team.teamAvatar(teamInfo.id, {
         file: avatarFile,
       })
-      .then((data) => {
-        updateNotification({
-          id: 'upload-avatar',
-          color: 'teal',
-          message: t('common.avatar.uploaded'),
-          icon: <Icon path={mdiCheck} size={1} />,
-          autoClose: true,
-        })
-        setAvatarFile(null)
-        const newTeamInfo = { ...teamInfo, avatar: data.data }
-        setTeamInfo(newTeamInfo)
-        mutateTeams(
-          teams?.map((x) => (x.id === teamInfo.id ? newTeamInfo : x)),
-          {
-            revalidate: false,
-          }
-        )
+      updateNotification({
+        id: 'upload-avatar',
+        color: 'teal',
+        message: t('common.avatar.uploaded'),
+        icon: <Icon path={mdiCheck} size={1} />,
+        autoClose: true,
+        loading: false,
       })
-      .catch((err) => {
-        updateNotification({
-          id: 'upload-avatar',
-          color: 'red',
-          title: t('common.avatar.upload_failed'),
-          message: tryGetErrorMsg(err, t),
-          icon: <Icon path={mdiClose} size={1} />,
-          autoClose: true,
-        })
+      setAvatarFile(null)
+      const newTeamInfo = { ...teamInfo, avatar: data.data }
+      setTeamInfo(newTeamInfo)
+      mutateTeams(
+        teams?.map((x) => (x.id === teamInfo.id ? newTeamInfo : x)),
+        {
+          revalidate: false,
+        }
+      )
+    } catch (err) {
+      updateNotification({
+        id: 'upload-avatar',
+        color: 'red',
+        title: t('common.avatar.upload_failed'),
+        message: tryGetErrorMsg(err, t),
+        icon: <Icon path={mdiClose} size={1} />,
+        autoClose: true,
+        loading: false,
       })
-      .finally(() => {
-        setDisabled(false)
-        setDropzoneOpened(false)
-      })
+    } finally {
+      setDisabled(false)
+      setDropzoneOpened(false)
+    }
   }
 
-  const onSaveChange = () => {
+  const onSaveChange = async () => {
     if (!teamInfo || !teamInfo?.id) return
-    api.team
-      .teamUpdateTeam(teamInfo.id, teamInfo)
-      .then(() => {
-        showNotification({
-          color: 'teal',
-          message: t('team.notification.updated'),
-          icon: <Icon path={mdiCheck} size={1} />,
-        })
-        mutateTeams(
-          teams?.map((x) => (x.id === teamInfo.id ? teamInfo : x)),
-          {
-            revalidate: false,
-          }
-        )
+
+    try {
+      await api.team.teamUpdateTeam(teamInfo.id, teamInfo)
+      showNotification({
+        color: 'teal',
+        message: t('team.notification.updated'),
+        icon: <Icon path={mdiCheck} size={1} />,
       })
-      .catch((e) => showErrorNotification(e, t))
+      mutateTeams(
+        teams?.map((x) => (x.id === teamInfo.id ? teamInfo : x)),
+        {
+          revalidate: false,
+        }
+      )
+    } catch (e) {
+      showErrorNotification(e, t)
+    }
   }
 
   return (
@@ -291,7 +298,7 @@ const TeamEditModal: FC<TeamEditModalProps> = (props) => {
         props.onClose()
       }}
     >
-      <Stack spacing="lg">
+      <Stack gap="lg">
         {/* Team Info */}
         <Grid grow>
           <Grid.Col span={8}>
@@ -322,23 +329,9 @@ const TeamEditModal: FC<TeamEditModalProps> = (props) => {
         {isCaptain && (
           <PasswordInput
             label={
-              <Group spacing="xs">
+              <Group gap={3}>
                 <Text size="sm">{t('team.label.invite_code')}</Text>
-                <ActionIcon
-                  size="sm"
-                  onClick={onRefreshInviteCode}
-                  sx={(theme) => ({
-                    margin: '0 0 -0.1rem -0.5rem',
-                    '&:hover': {
-                      color:
-                        theme.colorScheme === 'dark'
-                          ? theme.colors[theme.primaryColor][2]
-                          : theme.colors[theme.primaryColor][7],
-                      backgroundColor:
-                        theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.white,
-                    },
-                  })}
-                >
+                <ActionIcon size="sm" onClick={onRefreshInviteCode}>
                   <Icon path={mdiRefresh} size={1} />
                 </ActionIcon>
               </Group>
@@ -356,7 +349,6 @@ const TeamEditModal: FC<TeamEditModalProps> = (props) => {
             readOnly
           />
         )}
-
         <Textarea
           label={t('team.label.bio')}
           placeholder={teamInfo?.bio ?? t('team.placeholder.bio')}
@@ -368,13 +360,12 @@ const TeamEditModal: FC<TeamEditModalProps> = (props) => {
           maxRows={4}
           onChange={(event) => setTeamInfo({ ...teamInfo, bio: event.target.value })}
         />
-
         <Text size="sm">{t('team.label.members')}</Text>
         <ScrollArea h={140} offsetScrollbars>
-          <Stack spacing="xs">
+          <Stack gap="xs">
             {captain && (
-              <Group position="apart">
-                <Group position="left">
+              <Group justify="space-between">
+                <Group justify="left">
                   <Avatar alt="avatar" src={captain.avatar} radius="xl">
                     {captain.userName?.slice(0, 1) ?? 'C'}
                   </Avatar>
@@ -401,7 +392,6 @@ const TeamEditModal: FC<TeamEditModalProps> = (props) => {
                         </Text>
                       ),
                       onConfirm: () => onTransferCaptain(user.id!),
-
                       confirmProps: { color: 'orange' },
                       zIndex: 10000,
                     })
@@ -409,7 +399,6 @@ const TeamEditModal: FC<TeamEditModalProps> = (props) => {
                   onKick={(user: TeamUserInfoModel) => {
                     modals.openConfirmModal({
                       title: t('team.content.kick.confirm.title'),
-
                       children: (
                         <Text size="sm">
                           {t('team.content.kick.confirm.message', {
@@ -418,7 +407,6 @@ const TeamEditModal: FC<TeamEditModalProps> = (props) => {
                         </Text>
                       ),
                       onConfirm: () => onConfirmKickUser(user.id!),
-
                       confirmProps: { color: 'orange' },
                       zIndex: 10000,
                     })
@@ -435,9 +423,7 @@ const TeamEditModal: FC<TeamEditModalProps> = (props) => {
             variant="outline"
             onClick={() => {
               modals.openConfirmModal({
-                title: isCaptain
-                  ? t('team.content.disband.confirm.title')
-                  : t('team.content.leave.confirm.title'),
+                title: isCaptain ? t('team.content.disband.confirm.title') : t('team.content.leave.confirm.title'),
                 children: (
                   <Text size="sm">
                     {isCaptain
@@ -450,7 +436,6 @@ const TeamEditModal: FC<TeamEditModalProps> = (props) => {
                   </Text>
                 ),
                 onConfirm: isCaptain ? onConfirmDisbandTeam : onConfirmLeaveTeam,
-
                 confirmProps: { color: 'red' },
                 zIndex: 10000,
               })
@@ -465,12 +450,7 @@ const TeamEditModal: FC<TeamEditModalProps> = (props) => {
       </Stack>
 
       {/* 更新头像浮窗 */}
-      <Modal
-        opened={dropzoneOpened}
-        onClose={() => setDropzoneOpened(false)}
-        withCloseButton={false}
-        zIndex={1000}
-      >
+      <Modal opened={dropzoneOpened} onClose={() => setDropzoneOpened(false)} withCloseButton={false} zIndex={1000}>
         <Dropzone
           onDrop={(files) => setAvatarFile(files[0])}
           onReject={() => {
@@ -486,9 +466,9 @@ const TeamEditModal: FC<TeamEditModalProps> = (props) => {
           mih={220}
           disabled={disabled}
           maxSize={3 * 1024 * 1024}
-          accept={ACCEPT_IMAGE_MIME_TYPE}
+          accept={IMAGE_MIME_TYPES}
         >
-          <Group position="center" spacing="xl" mih={240} style={{ pointerEvents: 'none' }}>
+          <Group justify="center" gap="xl" mih={240} className={misc.n}>
             {avatarFile ? (
               <Image fit="contain" src={URL.createObjectURL(avatarFile)} alt="avatar" />
             ) : (
@@ -512,5 +492,3 @@ const TeamEditModal: FC<TeamEditModalProps> = (props) => {
     </Modal>
   )
 }
-
-export default TeamEditModal

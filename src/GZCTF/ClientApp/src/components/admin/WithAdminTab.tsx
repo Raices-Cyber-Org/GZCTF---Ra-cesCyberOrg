@@ -1,4 +1,4 @@
-import { Group, GroupProps, LoadingOverlay, Stack, useMantineTheme } from '@mantine/core'
+import { Group, GroupProps, LoadingOverlay, Stack } from '@mantine/core'
 import {
   mdiAccountCogOutline,
   mdiAccountGroupOutline,
@@ -10,9 +10,10 @@ import {
 import { Icon } from '@mdi/react'
 import React, { FC, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useLocation, useNavigate } from 'react-router-dom'
-import IconTabs from '@Components/IconTabs'
-import { usePageTitle } from '@Utils/usePageTitle'
+import { useLocation, useNavigate } from 'react-router'
+import { IconTabs } from '@Components/IconTabs'
+import { DEFAULT_LOADING_OVERLAY } from '@Utils/Shared'
+import { usePageTitle } from '@Hooks/usePageTitle'
 
 export interface AdminTabProps extends React.PropsWithChildren {
   head?: React.ReactNode
@@ -20,29 +21,26 @@ export interface AdminTabProps extends React.PropsWithChildren {
   headProps?: GroupProps
 }
 
-const WithAdminTab: FC<AdminTabProps> = ({ head, headProps, isLoading, children }) => {
+export const WithAdminTab: FC<AdminTabProps> = ({ head, headProps, isLoading, children }) => {
   const navigate = useNavigate()
   const location = useLocation()
 
-  const theme = useMantineTheme()
   const { t } = useTranslation()
 
   const pages = [
-    { icon: mdiFlagOutline, title: t('admin.tab.games.index'), path: 'games', color: 'yellow' },
-    { icon: mdiAccountGroupOutline, title: t('admin.tab.teams'), path: 'teams', color: 'green' },
-    { icon: mdiAccountCogOutline, title: t('admin.tab.users'), path: 'users', color: 'cyan' },
+    { icon: mdiFlagOutline, title: t('admin.tab.games.index'), path: 'games' },
+    { icon: mdiAccountGroupOutline, title: t('admin.tab.teams'), path: 'teams' },
+    { icon: mdiAccountCogOutline, title: t('admin.tab.users'), path: 'users' },
     {
       icon: mdiPackageVariantClosed,
       title: t('admin.tab.instances'),
       path: 'instances',
-      color: 'blue',
     },
-    { icon: mdiFileDocumentOutline, title: t('admin.tab.logs'), path: 'logs', color: 'red' },
-    { icon: mdiSitemapOutline, title: t('admin.tab.settings'), path: 'settings', color: 'orange' },
+    { icon: mdiFileDocumentOutline, title: t('admin.tab.logs'), path: 'logs' },
+    { icon: mdiSitemapOutline, title: t('admin.tab.settings'), path: 'settings' },
   ]
   const getTab = (path: string) => pages.findIndex((page) => path.startsWith(`/admin/${page.path}`))
   const tabIndex = getTab(location.pathname)
-
   const [activeTab, setActiveTab] = useState(tabIndex < 0 ? 0 : tabIndex)
 
   const onChange = (active: number, tabKey: string) => {
@@ -62,7 +60,7 @@ const WithAdminTab: FC<AdminTabProps> = ({ head, headProps, isLoading, children 
   usePageTitle(pages[tabIndex].title)
 
   return (
-    <Stack spacing="xs" align="center" pt="md">
+    <Stack gap="xs" align="center" pt="md">
       <IconTabs
         withIcon
         active={activeTab}
@@ -71,22 +69,15 @@ const WithAdminTab: FC<AdminTabProps> = ({ head, headProps, isLoading, children 
           tabKey: p.path,
           label: p.title,
           icon: <Icon path={p.icon} size={1} />,
-          color: p.color,
         }))}
       />
       {head && (
-        <Group noWrap position="apart" h="40px" w="100%" {...headProps}>
+        <Group wrap="nowrap" justify="space-between" h="40px" w="100%" {...headProps}>
           {head}
         </Group>
       )}
-      <LoadingOverlay
-        visible={isLoading ?? false}
-        overlayOpacity={1}
-        overlayColor={theme.colorScheme === 'dark' ? theme.colors.gray[7] : theme.colors.white[2]}
-      />
       {children}
+      <LoadingOverlay visible={isLoading ?? false} overlayProps={DEFAULT_LOADING_OVERLAY} />
     </Stack>
   )
 }
-
-export default WithAdminTab

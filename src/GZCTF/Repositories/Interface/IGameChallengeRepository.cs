@@ -17,9 +17,10 @@ public interface IGameChallengeRepository : IRepository
     /// 移除题目对象
     /// </summary>
     /// <param name="challenge">题目对象</param>
+    /// <param name="save"></param>
     /// <param name="token"></param>
     /// <returns></returns>
-    public Task RemoveChallenge(GameChallenge challenge, CancellationToken token = default);
+    public Task RemoveChallenge(GameChallenge challenge, bool save = true, CancellationToken token = default);
 
     /// <summary>
     /// 获取全部题目
@@ -30,15 +31,21 @@ public interface IGameChallengeRepository : IRepository
     public Task<GameChallenge[]> GetChallenges(int gameId, CancellationToken token = default);
 
     /// <summary>
-    /// 获取题目
+    /// 获取题目信息，不包含 Flag
     /// </summary>
     /// <param name="gameId">比赛Id</param>
     /// <param name="id">题目Id</param>
-    /// <param name="withFlag">是否加载Flag</param>
     /// <param name="token"></param>
     /// <returns></returns>
-    public Task<GameChallenge?> GetChallenge(int gameId, int id, bool withFlag = false,
-        CancellationToken token = default);
+    public Task<GameChallenge?> GetChallenge(int gameId, int id, CancellationToken token = default);
+
+    /// <summary>
+    /// 加载 Flags
+    /// </summary>
+    /// <param name="challenge">题目</param>
+    /// <param name="token"></param>
+    /// <returns></returns>
+    public Task LoadFlags(GameChallenge challenge, CancellationToken token = default);
 
     /// <summary>
     /// 获取全部需要捕获流量的题目
@@ -86,11 +93,10 @@ public interface IGameChallengeRepository : IRepository
     public Task<TaskStatus> RemoveFlag(GameChallenge challenge, int flagId, CancellationToken token = default);
 
     /// <summary>
-    /// 验证静态 Flag（可能多个答案）
+    /// 重新计算解题数量
     /// </summary>
-    /// <param name="challenge">题目对象</param>
-    /// <param name="flag">Flag 字符串</param>
+    /// <param name="game">比赛 id</param>
     /// <param name="token"></param>
     /// <returns></returns>
-    public Task<bool> VerifyStaticAnswer(GameChallenge challenge, string flag, CancellationToken token = default);
+    public Task<bool> RecalculateAcceptedCount(Game game, CancellationToken token = default);
 }

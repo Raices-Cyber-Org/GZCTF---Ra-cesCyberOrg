@@ -1,89 +1,88 @@
-import { AppShell, Box, LoadingOverlay, Stack, useMantineTheme } from '@mantine/core'
-import React, { FC } from 'react'
-import AppFooter from '@Components/AppFooter'
-import AppHeader from '@Components/AppHeader'
-import AppNavbar from '@Components/AppNavbar'
-import Watermark from '@Components/Watermark'
-import WithWiderScreen from '@Components/WithWiderScreen'
-import { useUser } from '@Utils/useUser'
+import { AppShell, Box, LoadingOverlay, Stack, useMantineColorScheme, useMantineTheme } from '@mantine/core'
+import React, { FC, useState } from 'react'
+import { AppFooter } from '@Components/AppFooter'
+import { AppHeader } from '@Components/AppHeader'
+import { AppNavbar } from '@Components/AppNavbar'
+import { CustomColorModal } from '@Components/CustomColorModal'
+import { IconHeader } from '@Components/IconHeader'
+import { Watermark } from '@Components/Watermark'
+import { WithWiderScreen } from '@Components/WithWiderScreen'
+import { DEFAULT_LOADING_OVERLAY } from '@Utils/Shared'
+import { useIsMobile } from '@Utils/ThemeOverride'
+import { useUser } from '@Hooks/useUser'
+import classes from '@Styles/AppNavbar.module.css'
 
 interface WithNavBarProps extends React.PropsWithChildren {
   width?: string
   minWidth?: number
   isLoading?: boolean
   withFooter?: boolean
+  withHeader?: boolean
+  stickyHeader?: boolean
 }
 
-const WithNavBar: FC<WithNavBarProps> = ({
+export interface AppControlProps {
+  openColorModal: () => void
+}
+
+export const WithNavBar: FC<WithNavBarProps> = ({
   children,
   width,
   isLoading,
   minWidth,
   withFooter = false,
+  withHeader,
+  stickyHeader = false,
 }) => {
   const theme = useMantineTheme()
+  const { colorScheme } = useMantineColorScheme()
   const { user } = useUser()
+  const isMobile = useIsMobile()
+  const [colorModalOpened, setColorModalOpened] = useState(false)
+
+  const openColorModal = () => setColorModalOpened(true)
 
   return (
     <WithWiderScreen minWidth={minWidth}>
       <Watermark
         text={user?.userId ?? ''}
-        textColor={theme.colorScheme === 'dark' ? theme.colors.gray[3] : theme.colors.gray[7]}
-        rotate={-9}
-        textSize={15}
-        gutter={20}
-        opacity={theme.colorScheme === 'dark' ? 0.012 : 0.024}
-        fontFamily="JetBrains Mono"
+        textColor={colorScheme === 'dark' ? theme.colors.gray[3] : theme.colors.gray[7]}
+        rotate={-12}
+        textSize={14}
+        gutter={22}
+        opacity={colorScheme === 'dark' ? 0.018 : 0.025}
       >
         <AppShell
-          padding={0}
-          fixed
-          navbar={<AppNavbar />}
-          header={<AppHeader />}
-          styles={{
-            body: {
-              overflow: 'hidden',
+          p={0}
+          header={{ height: 60, collapsed: !isMobile }}
+          navbar={{
+            width: 65,
+            breakpoint: 'sm',
+            collapsed: {
+              mobile: true,
             },
           }}
         >
-          <Stack
-            w="100%"
-            mih="100vh"
-            pb={withFooter ? 'xl' : 0}
-            pos="relative"
-            align="center"
-            style={{
-              zIndex: 10,
-              boxShadow: theme.shadows.sm,
-              backgroundColor:
-                theme.colorScheme === 'dark' ? theme.colors.gray[7] : theme.colors.white[2],
-            }}
-          >
-            <LoadingOverlay
-              visible={isLoading ?? false}
-              overlayOpacity={1}
-              overlayColor={
-                theme.colorScheme === 'dark' ? theme.colors.gray[7] : theme.colors.white[2]
-              }
-            />
-            <Box
-              sx={(theme) => ({
-                width: width ?? '80%',
-                zIndex: 20,
-
-                [theme.fn.smallerThan('xs')]: {
-                  width: '97%',
-                },
-              })}
-            >
-              {children}
-            </Box>
-          </Stack>
-          {withFooter && <AppFooter />}
+          <AppHeader openColorModal={openColorModal} />
+          <AppNavbar openColorModal={openColorModal} />
+          <AppShell.Main w="100%">
+            <Stack data-mobile={isMobile || undefined} data-pb={withFooter || undefined} className={classes.main}>
+              <LoadingOverlay visible={isLoading ?? false} overlayProps={DEFAULT_LOADING_OVERLAY} />
+              {withHeader && <IconHeader px={isMobile ? '2%' : '10%'} sticky={stickyHeader} />}
+              <Box
+                w={width ?? (isMobile ? '96%' : '80%')}
+                style={{
+                  zIndex: 20,
+                }}
+              >
+                {children}
+              </Box>
+              <CustomColorModal opened={colorModalOpened} onClose={() => setColorModalOpened(false)} />
+            </Stack>
+            {withFooter && <AppFooter />}
+          </AppShell.Main>
         </AppShell>
       </Watermark>
     </WithWiderScreen>
   )
 }
-
-export default WithNavBar

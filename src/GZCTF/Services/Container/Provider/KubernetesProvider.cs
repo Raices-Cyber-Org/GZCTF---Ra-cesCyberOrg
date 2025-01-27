@@ -1,6 +1,5 @@
 ﻿using System.Text.Json;
 using GZCTF.Models.Internal;
-using GZCTF.Services.Interface;
 using k8s;
 using k8s.Models;
 using Microsoft.Extensions.Options;
@@ -29,9 +28,9 @@ public class KubernetesMetadata : ContainerProviderMetadata
 public class KubernetesProvider : IContainerProvider<Kubernetes, KubernetesMetadata>
 {
     const string NetworkPolicy = "gzctf-policy";
-    readonly KubernetesMetadata _kubernetesMetadata;
 
     readonly Kubernetes _kubernetesClient;
+    readonly KubernetesMetadata _kubernetesMetadata;
 
     public KubernetesProvider(IOptions<RegistryConfig> registry, IOptions<ContainerProvider> options,
         ILogger<KubernetesProvider> logger)
@@ -43,14 +42,23 @@ public class KubernetesProvider : IContainerProvider<Kubernetes, KubernetesMetad
             PublicEntry = options.Value.PublicEntry
         };
 
-        if (!File.Exists(_kubernetesMetadata.Config.KubeConfig))
+        KubernetesClientConfiguration config;
+
+        if (File.Exists(_kubernetesMetadata.Config.KubeConfig))
+        {
+            config = KubernetesClientConfiguration.BuildConfigFromConfigFile(_kubernetesMetadata.Config.KubeConfig);
+        }
+        else if (KubernetesClientConfiguration.IsInCluster())
+        {
+            // use ServiceAccount token if running in cluster and no kube-config is provided
+            config = KubernetesClientConfiguration.InClusterConfig();
+        }
+        else
         {
             logger.SystemLog(StaticLocalizer[nameof(Resources.Program.ContainerProvider_KubernetesConfigLoadFailed),
                 _kubernetesMetadata.Config.KubeConfig]);
             throw new FileNotFoundException(_kubernetesMetadata.Config.KubeConfig);
         }
-
-        var config = KubernetesClientConfiguration.BuildConfigFromConfigFile(_kubernetesMetadata.Config.KubeConfig);
 
         _kubernetesMetadata.HostIp = new Uri(config.Host).Host;
 
@@ -96,6 +104,7 @@ public class KubernetesProvider : IContainerProvider<Kubernetes, KubernetesMetad
             _kubernetesClient.CoreV1.CreateNamespace(
                 new() { Metadata = new() { Name = _kubernetesMetadata.Config.Namespace } });
 
+        // skip if policy exists, which can be configured by admin outside GZCTF
         if (_kubernetesClient.NetworkingV1.ListNamespacedNetworkPolicy(_kubernetesMetadata.Config.Namespace).Items
             .All(np => np.Metadata.Name != NetworkPolicy))
             _kubernetesClient.NetworkingV1.CreateNamespacedNetworkPolicy(new()
@@ -115,7 +124,8 @@ public class KubernetesProvider : IContainerProvider<Kubernetes, KubernetesMetad
                                 {
                                     IpBlock = new()
                                     {
-                                        Cidr = "0.0.0.0/0", Except = _kubernetesMetadata.Config.AllowCidr
+                                        Cidr = "0.0.0.0/0",
+                                        Except = _kubernetesMetadata.Config.AllowCidr ?? ["10.0.0.0/8"]
                                     }
                                 }
                             ]
@@ -128,17 +138,15 @@ public class KubernetesProvider : IContainerProvider<Kubernetes, KubernetesMetad
             return;
 
         var auth = Codec.Base64.Encode($"{registry.UserName}:{registry.Password}");
-        var dockerJsonObj = new
-        {
-            auths = new Dictionary<string, object>
+        var dockerJsonObj = new DockerRegistryOptions(
+            new Dictionary<string, DockerRegistryEntry>
             {
-                {
-                    registry.ServerAddress, new { auth, username = registry.UserName, password = registry.Password }
-                }
+                [registry.ServerAddress] = new DockerRegistryEntry(auth, registry.UserName, registry.Password)
             }
-        };
+        );
 
-        var dockerJsonBytes = JsonSerializer.SerializeToUtf8Bytes(dockerJsonObj);
+        var dockerJsonBytes =
+            JsonSerializer.SerializeToUtf8Bytes(dockerJsonObj, AppJsonSerializerContext.Default.DockerRegistryOptions);
         var secret = new V1Secret
         {
             Metadata =
@@ -162,3 +170,7 @@ public class KubernetesProvider : IContainerProvider<Kubernetes, KubernetesMetad
         }
     }
 }
+
+internal record DockerRegistryOptions(Dictionary<string, DockerRegistryEntry> auths);
+
+internal record DockerRegistryEntry(string auth, string? username, string? password);

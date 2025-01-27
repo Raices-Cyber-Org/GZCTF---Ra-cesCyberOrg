@@ -1,11 +1,14 @@
 ﻿using System.IO.Compression;
 using System.Net;
+using System.Text;
 using GZCTF.Extensions;
+using GZCTF.Models.Internal;
 using Serilog;
 using Serilog.Context;
 using Serilog.Events;
 using Serilog.Filters;
 using Serilog.Sinks.File.Archive;
+using Serilog.Sinks.Grafana.Loki;
 using Serilog.Templates;
 using Serilog.Templates.Themes;
 using ILogger = Serilog.ILogger;
@@ -104,7 +107,7 @@ public static class LogHelper
 
             options.EnrichDiagnosticContext = (diagnosticContext, httpContext) =>
             {
-                diagnosticContext.Set("IP", httpContext.Connection.RemoteIpAddress);
+                diagnosticContext.Set("IP", httpContext.Connection.RemoteIpAddress?.ToString() ?? "");
             };
         });
 
@@ -121,16 +124,17 @@ public static class LogHelper
             ))
             .CreateBootstrapLogger();
 
-    public static ILogger GetLogger(IConfiguration configuration, IServiceProvider serviceProvider) =>
-        new LoggerConfiguration()
+    public static ILogger GetLogger(IConfiguration configuration, IServiceProvider serviceProvider)
+    {
+        LoggerConfiguration loggerConfig = new LoggerConfiguration()
             .Enrich.FromLogContext()
             .Filter.ByExcluding(
                 Matching.WithProperty<string>("RequestPath", v =>
-                    "/healthz".Equals(v, StringComparison.OrdinalIgnoreCase) ||
+                    v.TrimEnd('/').Equals("/healthz", StringComparison.OrdinalIgnoreCase) ||
+                    v.TrimEnd('/').Equals("/metrics", StringComparison.OrdinalIgnoreCase) ||
                     v.StartsWith("/assets", StringComparison.OrdinalIgnoreCase)))
             .Filter.ByExcluding(logEvent =>
-                logEvent.Exception != null &&
-                logEvent.Exception.GetType() == typeof(OperationCanceledException))
+                logEvent.Exception is OperationCanceledException)
             .MinimumLevel.Debug()
             .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
             .MinimumLevel.Override("AspNetCoreRateLimit", LogEventLevel.Warning)
@@ -139,23 +143,62 @@ public static class LogHelper
                 new ExpressionTemplate(LogTemplate, theme: TemplateTheme.Literate),
                 LogEventLevel.Debug))
             .WriteTo.Async(t => t.File(
-                path: $"{FilePath.Logs}/log_.log",
+                path: Path.Combine(PathHelper.Base, PathHelper.Logs, "log_.log"),
                 formatter: new ExpressionTemplate(LogTemplate),
                 rollingInterval: RollingInterval.Day,
                 fileSizeLimitBytes: 10 * 1024 * 1024,
                 restrictedToMinimumLevel: LogEventLevel.Debug,
                 rollOnFileSizeLimit: true,
                 retainedFileCountLimit: 5,
-                hooks: new ArchiveHooks(CompressionLevel.Optimal, $"{FilePath.Logs}/archive/{{UtcDate:yyyy-MM}}")
+                hooks: new ArchiveHooks(CompressionLevel.Optimal,
+                    Path.Combine(PathHelper.Base, PathHelper.Logs, "archive", "{UtcDate:yyyy-MM}"))
             ))
             .WriteTo.Database(serviceProvider)
-            .WriteTo.SignalR(serviceProvider)
-            .CreateLogger();
+            .WriteTo.SignalR(serviceProvider);
+
+        if (configuration.GetSection("Logging").GetSection("Loki") is not { } lokiSection || !lokiSection.Exists())
+            return loggerConfig.CreateLogger();
+
+        if (lokiSection.Get<GrafanaLokiOptions>() is { Enable: true, EndpointUri: not null } lokiOptions)
+            loggerConfig = loggerConfig.WriteTo.GrafanaLoki(
+                lokiOptions.EndpointUri,
+                lokiOptions.Labels ?? [new() { Key = "app", Value = "gzctf" }],
+                lokiOptions.PropertiesAsLabels,
+                lokiOptions.Credentials,
+                lokiOptions.Tenant,
+                (LogEventLevel)(lokiOptions.MinimumLevel ?? LogLevel.Trace));
+
+        return loggerConfig.CreateLogger();
+    }
 
     public static string GetStringValue(LogEventPropertyValue? value, string defaultValue = "")
     {
         if (value is ScalarValue { Value: string rawValue })
             return rawValue;
         return value?.ToString() ?? defaultValue;
+    }
+
+    public static string RenderMessageWithExceptions(this LogEvent logEvent)
+    {
+        if (logEvent.Exception is null)
+            return logEvent.RenderMessage();
+
+        var exception = logEvent.Exception;
+        var sb = new StringBuilder(logEvent.RenderMessage());
+
+        sb.AppendLine();
+        while (true)
+        {
+            sb.Append($"{exception.GetType()}: {exception.Message}");
+            exception = exception.InnerException;
+
+            if (exception is null)
+                break;
+
+            sb.AppendLine();
+            sb.Append(" ---> ");
+        }
+
+        return sb.ToString();
     }
 }

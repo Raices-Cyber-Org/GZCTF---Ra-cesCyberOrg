@@ -1,23 +1,21 @@
 import { Stack } from '@mantine/core'
 import { FC, useState } from 'react'
-import { useParams } from 'react-router-dom'
-import MobileScoreboardTable from '@Components/MobileScoreboardTable'
-import ScoreboardTable from '@Components/ScoreboardTable'
-import TeamRank from '@Components/TeamRank'
-import TimeLine from '@Components/TimeLine'
-import WithGameTab from '@Components/WithGameTab'
-import WithNavBar from '@Components/WithNavbar'
+import { useParams } from 'react-router'
+import { ScoreboardTable } from '@Components/ScoreboardTable'
+import { TeamRank } from '@Components/TeamRank'
+import { WithGameTab } from '@Components/WithGameTab'
+import { WithNavBar } from '@Components/WithNavbar'
+import { ScoreTimeLine } from '@Components/charts/ScoreTimeLine'
+import { MobileScoreboardTable } from '@Components/mobile/ScoreboardTable'
 import { useIsMobile } from '@Utils/ThemeOverride'
-import api from '@Api'
+import { useGameTeamInfo } from '@Hooks/useGame'
 
 const Scoreboard: FC = () => {
   const { id } = useParams()
   const numId = parseInt(id ?? '-1')
-  const { data, error } = api.game.useGameChallengesWithTeamInfo(numId, {
-    shouldRetryOnError: false,
-  })
+  const { teamInfo, error } = useGameTeamInfo(numId)
 
-  const [organization, setOrganization] = useState<string | null>('all')
+  const [division, setDivision] = useState<string | null>('all')
   const isMobile = useIsMobile(1080)
   const isVertical = useIsMobile()
 
@@ -25,27 +23,18 @@ const Scoreboard: FC = () => {
     <WithNavBar width="90%" minWidth={0}>
       {isMobile ? (
         <Stack pt="md">
-          {data && !error && <TeamRank />}
+          {teamInfo && !error && <TeamRank />}
           {isVertical ? (
-            <MobileScoreboardTable
-              organization={organization ?? 'all'}
-              setOrganization={setOrganization}
-            />
+            <MobileScoreboardTable division={division ?? 'all'} setDivision={setDivision} />
           ) : (
-            <ScoreboardTable
-              organization={organization ?? 'all'}
-              setOrganization={setOrganization}
-            />
+            <ScoreboardTable division={division ?? 'all'} setDivision={setDivision} />
           )}
         </Stack>
       ) : (
         <WithGameTab>
           <Stack pb="2rem">
-            <TimeLine organization={organization ?? 'all'} />
-            <ScoreboardTable
-              organization={organization ?? 'all'}
-              setOrganization={setOrganization}
-            />
+            <ScoreTimeLine division={division ?? 'all'} />
+            <ScoreboardTable division={division ?? 'all'} setDivision={setDivision} />
           </Stack>
         </WithGameTab>
       )}

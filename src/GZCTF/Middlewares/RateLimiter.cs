@@ -9,31 +9,41 @@ using Microsoft.Extensions.Localization;
 namespace GZCTF.Middlewares;
 
 /// <summary>
-/// 请求频率限制
+/// The rate limiter middleware
 /// </summary>
 public static class RateLimiter
 {
     public enum LimitPolicy
     {
         /// <summary>
-        /// 并发操作限制
+        /// Concurrency operation limit
         /// </summary>
         Concurrency,
 
         /// <summary>
-        /// 注册请求限制
+        /// Register limit
         /// </summary>
         Register,
 
         /// <summary>
-        /// 容器操作限制
+        /// Database query limit
+        /// </summary>
+        Query,
+
+        /// <summary>
+        /// Container operation limit
         /// </summary>
         Container,
 
         /// <summary>
-        /// 提交请求限制
+        /// Flag submit limit
         /// </summary>
-        Submit
+        Submit,
+
+        /// <summary>
+        /// Pow challenge generation limit
+        /// </summary>
+        PowChallenge
     }
 
     public static void ConfigureRateLimiter(RateLimiterOptions options)
@@ -47,9 +57,9 @@ public static class RateLimiter
                 return RateLimitPartition.GetSlidingWindowLimiter(userId,
                     _ => new()
                     {
+                        QueueLimit = 60,
                         PermitLimit = 150,
                         Window = TimeSpan.FromMinutes(1),
-                        QueueLimit = 60,
                         QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
                         SegmentsPerWindow = 6
                     });
@@ -62,9 +72,9 @@ public static class RateLimiter
             return RateLimitPartition.GetSlidingWindowLimiter(address.ToString(),
                 _ => new()
                 {
+                    QueueLimit = 60,
                     PermitLimit = 150,
                     Window = TimeSpan.FromMinutes(1),
-                    QueueLimit = 60,
                     QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
                     SegmentsPerWindow = 6
                 });
@@ -82,7 +92,7 @@ public static class RateLimiter
 
             context.HttpContext.Response.Headers.RetryAfter = afterSec.ToString(NumberFormatInfo.InvariantInfo);
             await context.HttpContext.Response.WriteAsJsonAsync(
-                new RequestResponse(localizer[nameof(Resources.Program.RateLimit_TooManyRequests)],
+                new RequestResponse(localizer[nameof(Resources.Program.RateLimit_TooManyRequests), afterSec],
                     StatusCodes.Status429TooManyRequests
                 ), cancellationToken);
         };
@@ -91,10 +101,25 @@ public static class RateLimiter
             o.PermitLimit = 1;
             o.QueueLimit = 20;
         });
-        options.AddFixedWindowLimiter(nameof(LimitPolicy.Register), o =>
+        options.AddSlidingWindowLimiter(nameof(LimitPolicy.Register), o =>
         {
+            o.QueueLimit = 10;
             o.PermitLimit = 20;
             o.Window = TimeSpan.FromSeconds(150);
+            o.QueueProcessingOrder = QueueProcessingOrder.NewestFirst;
+            o.SegmentsPerWindow = 5;
+        });
+        options.AddTokenBucketLimiter(nameof(LimitPolicy.Query), o =>
+        {
+            o.TokenLimit = 100;
+            o.TokensPerPeriod = 10;
+            o.ReplenishmentPeriod = TimeSpan.FromSeconds(10);
+        });
+        options.AddTokenBucketLimiter(nameof(LimitPolicy.PowChallenge), o =>
+        {
+            o.TokenLimit = 40;
+            o.TokensPerPeriod = 5;
+            o.ReplenishmentPeriod = TimeSpan.FromSeconds(30);
         });
         options.AddTokenBucketLimiter(nameof(LimitPolicy.Container), o =>
         {
@@ -104,8 +129,8 @@ public static class RateLimiter
         });
         options.AddTokenBucketLimiter(nameof(LimitPolicy.Submit), o =>
         {
-            o.TokenLimit = 60;
-            o.TokensPerPeriod = 30;
+            o.TokenLimit = 100;
+            o.TokensPerPeriod = 50;
             o.ReplenishmentPeriod = TimeSpan.FromSeconds(5);
         });
     }

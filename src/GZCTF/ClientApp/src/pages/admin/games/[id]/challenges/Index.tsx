@@ -1,29 +1,19 @@
-import {
-  Button,
-  Center,
-  Group,
-  ScrollArea,
-  Select,
-  SimpleGrid,
-  Stack,
-  Text,
-  Title,
-} from '@mantine/core'
+import { Button, Center, ComboboxItem, Group, ScrollArea, Select, SimpleGrid, Stack, Text, Title } from '@mantine/core'
 import { useModals } from '@mantine/modals'
 import { showNotification } from '@mantine/notifications'
-import { mdiCheck, mdiHexagonSlice6, mdiPlus } from '@mdi/js'
+import { mdiCheck, mdiHexagonSlice6, mdiPlus, mdiRefresh } from '@mdi/js'
 import { Icon } from '@mdi/react'
 import { Dispatch, FC, SetStateAction, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useParams } from 'react-router-dom'
-import BloodBonusModel from '@Components/admin/BloodBonusModel'
-import ChallengeCreateModal from '@Components/admin/ChallengeCreateModal'
-import ChallengeEditCard from '@Components/admin/ChallengeEditCard'
-import WithGameEditTab from '@Components/admin/WithGameEditTab'
+import { useParams } from 'react-router'
+import { BloodBonusModel } from '@Components/admin/BloodBonusModel'
+import { ChallengeCreateModal } from '@Components/admin/ChallengeCreateModal'
+import { ChallengeEditCard } from '@Components/admin/ChallengeEditCard'
+import { WithGameEditTab } from '@Components/admin/WithGameEditTab'
 import { showErrorNotification } from '@Utils/ApiHelper'
-import { ChallengeTagItem, useChallengeTagLabelMap } from '@Utils/Shared'
-import { OnceSWRConfig } from '@Utils/useConfig'
-import api, { ChallengeInfoModel, ChallengeTag } from '@Api'
+import { ChallengeCategoryItem, ChallengeCategoryList, useChallengeCategoryLabelMap } from '@Utils/Shared'
+import { useEditChallenges } from '@Hooks/useEdit'
+import api, { ChallengeInfoModel, ChallengeCategory } from '@Api'
 
 const GameChallengeEdit: FC = () => {
   const { id } = useParams()
@@ -31,26 +21,21 @@ const GameChallengeEdit: FC = () => {
 
   const [createOpened, setCreateOpened] = useState(false)
   const [bonusOpened, setBonusOpened] = useState(false)
-  const [category, setCategory] = useState<ChallengeTag | null>(null)
-  const challengeTagLabelMap = useChallengeTagLabelMap()
+  const [category, setCategory] = useState<ChallengeCategory | null>(null)
+  const challengeCategoryLabelMap = useChallengeCategoryLabelMap()
+  const [disabled, setDisabled] = useState(false)
 
   const { t } = useTranslation()
 
-  const { data: challenges, mutate } = api.edit.useEditGetGameChallenges(numId, OnceSWRConfig)
+  const { challenges, mutate } = useEditChallenges(numId)
 
-  const filteredChallenges =
-    category && challenges ? challenges?.filter((c) => c.tag === category) : challenges
-  filteredChallenges?.sort((a, b) => ((a.tag ?? '') > (b.tag ?? '') ? -1 : 1))
+  const filteredChallenges = category && challenges ? challenges?.filter((c) => c.category === category) : challenges
 
   const modals = useModals()
-  const onToggle = (
-    challenge: ChallengeInfoModel,
-    setDisabled: Dispatch<SetStateAction<boolean>>
-  ) => {
+
+  const onToggle = (challenge: ChallengeInfoModel, setDisabled: Dispatch<SetStateAction<boolean>>) => {
     modals.openConfirmModal({
-      title: challenge.isEnabled
-        ? t('admin.button.challenges.disable')
-        : t('admin.button.challenges.enable'),
+      title: challenge.isEnabled ? t('admin.button.challenges.disable') : t('admin.button.challenges.enable'),
       children: (
         <Text size="sm">
           {challenge.isEnabled
@@ -63,37 +48,50 @@ const GameChallengeEdit: FC = () => {
     })
   }
 
-  const onConfirmToggle = (
-    challenge: ChallengeInfoModel,
-    setDisabled: Dispatch<SetStateAction<boolean>>
-  ) => {
+  const onConfirmToggle = async (challenge: ChallengeInfoModel, setDisabled: Dispatch<SetStateAction<boolean>>) => {
     const numId = parseInt(id ?? '-1')
     setDisabled(true)
-    api.edit
-      .editUpdateGameChallenge(numId, challenge.id!, {
+
+    try {
+      await api.edit.editUpdateGameChallenge(numId, challenge.id!, {
         isEnabled: !challenge.isEnabled,
       })
-      .then(() => {
-        showNotification({
-          color: 'teal',
-          message: t('admin.notification.games.challenges.updated'),
-          icon: <Icon path={mdiCheck} size={1} />,
-        })
-        mutate(
-          challenges?.map((c) =>
-            c.id === challenge.id ? { ...c, isEnabled: !challenge.isEnabled } : c
-          )
-        )
+      showNotification({
+        color: 'teal',
+        message: t('admin.notification.games.challenges.updated'),
+        icon: <Icon path={mdiCheck} size={1} />,
       })
-      .catch((e) => showErrorNotification(e, t))
-      .finally(() => {
-        setDisabled(false)
+      mutate(challenges?.map((c) => (c.id === challenge.id ? { ...c, isEnabled: !challenge.isEnabled } : c)))
+    } catch (e) {
+      showErrorNotification(e, t)
+    } finally {
+      setDisabled(false)
+    }
+  }
+
+  const onUpdateAcceptCount = async () => {
+    if (!numId) return
+
+    setDisabled(true)
+
+    try {
+      await api.edit.editUpdateGameChallengesAcceptedCount(numId)
+      showNotification({
+        color: 'teal',
+        message: t('admin.notification.games.info.accept_count_updated'),
+        icon: <Icon path={mdiCheck} size={1} />,
       })
+      mutate()
+    } catch {
+      showErrorNotification(t('common.error.try_later'), t)
+    } finally {
+      setDisabled(false)
+    }
   }
 
   return (
     <WithGameEditTab
-      headProps={{ position: 'apart' }}
+      headProps={{ justify: 'apart' }}
       isLoading={!challenges}
       head={
         <>
@@ -101,27 +99,24 @@ const GameChallengeEdit: FC = () => {
             placeholder={t('admin.content.show_all')}
             clearable
             searchable
-            nothingFound={t('admin.content.nothing_found')}
+            w="16rem"
             value={category}
-            onChange={(value: ChallengeTag) => setCategory(value)}
-            itemComponent={ChallengeTagItem}
-            data={Object.entries(ChallengeTag).map((tag) => {
-              const data = challengeTagLabelMap.get(tag[1])
-              return { value: tag[1], ...data }
+            nothingFoundMessage={t('admin.content.nothing_found')}
+            onChange={(value) => setCategory(value as ChallengeCategory | null)}
+            renderOption={ChallengeCategoryItem}
+            data={ChallengeCategoryList.map((cate) => {
+              const data = challengeCategoryLabelMap.get(cate)
+              return { value: cate, label: data?.name, ...data } as ComboboxItem
             })}
           />
-          <Group position="right">
-            <Button
-              leftIcon={<Icon path={mdiHexagonSlice6} size={1} />}
-              onClick={() => setBonusOpened(true)}
-            >
+          <Group justify="right">
+            <Button leftSection={<Icon path={mdiRefresh} size={1} />} disabled={disabled} onClick={onUpdateAcceptCount}>
+              {t('admin.button.challenges.update_accept_count')}
+            </Button>
+            <Button leftSection={<Icon path={mdiHexagonSlice6} size={1} />} onClick={() => setBonusOpened(true)}>
               {t('admin.button.challenges.bonus')}
             </Button>
-            <Button
-              mr="18px"
-              leftIcon={<Icon path={mdiPlus} size={1} />}
-              onClick={() => setCreateOpened(true)}
-            >
+            <Button mr="18px" leftSection={<Icon path={mdiPlus} size={1} />} onClick={() => setCreateOpened(true)}>
               {t('admin.button.challenges.new')}
             </Button>
           </Group>
@@ -131,20 +126,13 @@ const GameChallengeEdit: FC = () => {
       <ScrollArea h="calc(100vh - 180px)" pos="relative" offsetScrollbars type="auto">
         {!filteredChallenges || filteredChallenges.length === 0 ? (
           <Center h="calc(100vh - 200px)">
-            <Stack spacing={0}>
+            <Stack gap={0}>
               <Title order={2}>{t('admin.content.games.challenges.empty.title')}</Title>
               <Text>{t('admin.content.games.challenges.empty.description')}</Text>
             </Stack>
           </Center>
         ) : (
-          <SimpleGrid
-            cols={2}
-            pr={6}
-            breakpoints={[
-              { maxWidth: 3600, cols: 2, spacing: 'sm' },
-              { maxWidth: 1800, cols: 1, spacing: 'sm' },
-            ]}
-          >
+          <SimpleGrid pr={6} cols={{ base: 2, w18: 3, w24: 4, w30: 5, w36: 6, w42: 7, w48: 8 }} spacing="sm">
             {filteredChallenges &&
               filteredChallenges.map((challenge) => (
                 <ChallengeEditCard key={challenge.id} challenge={challenge} onToggle={onToggle} />

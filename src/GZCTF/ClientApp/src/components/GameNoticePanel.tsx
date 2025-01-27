@@ -1,17 +1,20 @@
-import { Card, Center, List, ScrollArea, SegmentedControl, Stack, Text } from '@mantine/core'
+import { Card, Center, List, ScrollArea, SegmentedControl, Stack, Text, useMantineTheme } from '@mantine/core'
 import { showNotification } from '@mantine/notifications'
-import { mdiClose } from '@mdi/js'
 import { Icon } from '@mdi/react'
 import * as signalR from '@microsoft/signalr'
 import dayjs from 'dayjs'
 import { TFunction } from 'i18next'
 import { FC, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useParams } from 'react-router-dom'
-import Empty from '@Components/Empty'
-import { InlineMarkdownRender } from '@Components/MarkdownRender'
+import { useParams } from 'react-router'
+import { Empty } from '@Components/Empty'
+import { InlineMarkdown } from '@Components/MarkdownRenderer'
+import { useLanguage } from '@Utils/I18n'
 import { NoticTypeIconMap } from '@Utils/Shared'
+import { OnceSWRConfig } from '@Hooks/useConfig'
 import api, { GameNotice, NoticeType } from '@Api'
+import misc from '@Styles/Misc.module.css'
+import typoClasses from '@Styles/Typography.module.css'
 
 enum NoticeFilter {
   All = 'all',
@@ -25,9 +28,7 @@ const ApplyFilter = (notices: GameNotice[], filter: NoticeFilter) => {
     case NoticeFilter.All:
       return notices
     case NoticeFilter.Challenge:
-      return notices.filter(
-        (notice) => notice.type === NoticeType.NewChallenge || notice.type === NoticeType.NewHint
-      )
+      return notices.filter((notice) => notice.type === NoticeType.NewChallenge || notice.type === NoticeType.NewHint)
     case NoticeFilter.Events:
       return notices.filter(
         (notice) =>
@@ -77,33 +78,22 @@ const formatNotice = (t: TFunction, notice: GameNotice) => {
   }
 }
 
-const GameNoticePanel: FC = () => {
+const PANEL_HEIGHT = 'calc(100vh - 25rem)'
+
+export const GameNoticePanel: FC = () => {
   const { id } = useParams()
   const numId = parseInt(id ?? '-1')
 
   const [, update] = useState(new Date())
   const newNotices = useRef<GameNotice[]>([])
-  const [notices, setNotices] = useState<GameNotice[]>()
   const [filter, setFilter] = useState<NoticeFilter>(NoticeFilter.All)
   const iconMap = NoticTypeIconMap(0.8)
 
   const { t } = useTranslation()
+  const { locale } = useLanguage()
+  const theme = useMantineTheme()
 
-  useEffect(() => {
-    api.game
-      .gameNotices(numId)
-      .then((data) => {
-        setNotices(data.data)
-      })
-      .catch((err) => {
-        showNotification({
-          color: 'red',
-          title: t('game.notification.fetch_failed.notice'),
-          message: err.response.data.title,
-          icon: <Icon path={mdiClose} size={1} />,
-        })
-      })
-  }, [numId])
+  const { data: notices } = api.game.useGameNotices(numId, {}, OnceSWRConfig)
 
   useEffect(() => {
     newNotices.current = []
@@ -121,7 +111,6 @@ const GameNoticePanel: FC = () => {
       connection.serverTimeoutInMilliseconds = 60 * 1000 * 60 * 2
 
       connection.on('ReceivedGameNotice', (message: GameNotice) => {
-        console.log(message)
         newNotices.current = [message, ...newNotices.current]
 
         if (message.type === NoticeType.NewChallenge || message.type === NoticeType.NewHint) {
@@ -134,7 +123,7 @@ const GameNoticePanel: FC = () => {
 
         if (message.type === NoticeType.Normal) {
           showNotification({
-            color: 'brand',
+            color: theme.primaryColor,
             message: formatNotice(t, message),
             autoClose: 5000,
           })
@@ -153,7 +142,7 @@ const GameNoticePanel: FC = () => {
         })
       }
     }
-  }, [])
+  })
 
   const allNotices = [...newNotices.current, ...(notices ?? [])]
   const filteredNotices = ApplyFilter(allNotices, filter)
@@ -165,16 +154,15 @@ const GameNoticePanel: FC = () => {
   )
 
   return (
-    <Card shadow="sm" w="20rem">
-      <Stack spacing="xs">
+    <Card shadow="sm" w="100%">
+      <Stack gap="xs">
         <SegmentedControl
           value={filter}
-          styles={{
-            root: {
-              background: 'transparent',
-            },
-          }}
-          onChange={(value: NoticeFilter) => setFilter(value)}
+          color={theme.primaryColor}
+          fullWidth
+          bg="transparent"
+          fw={500}
+          onChange={(value) => setFilter(value as NoticeFilter)}
           data={[
             { value: NoticeFilter.All, label: t('game.label.notice_type.all') },
             { value: NoticeFilter.Game, label: t('game.label.notice_type.game') },
@@ -183,31 +171,28 @@ const GameNoticePanel: FC = () => {
           ]}
         />
         {filteredNotices.length ? (
-          <ScrollArea offsetScrollbars scrollbarSize={0} h="calc(100vh - 25rem)">
-            <List
-              size="sm"
-              spacing={3}
-              styles={(theme) => ({
-                item: {
-                  fontWeight: 500,
-                  color: theme.colorScheme === 'dark' ? theme.colors.dark[2] : theme.colors.gray[6],
-                },
-              })}
-            >
+          <ScrollArea offsetScrollbars scrollbarSize={0} h={PANEL_HEIGHT}>
+            <List size="sm" spacing={3} classNames={{ itemWrapper: misc.alignNormal }}>
               {filteredNotices.map((notice) => (
-                <List.Item key={notice.id} icon={iconMap.get(notice.type)}>
-                  <Stack spacing={1}>
-                    <Text size="xs" fw={700} c="dimmed">
-                      {dayjs(notice.time).format('YY/MM/DD HH:mm:ss')}
+                <List.Item key={notice.id} icon={<Icon {...iconMap.get(notice.type)!} />}>
+                  <Stack gap={1}>
+                    <Text fz="xs" fw="bold" c="dimmed">
+                      {dayjs(notice.time).locale(locale).format('SLL LTS')}
                     </Text>
-                    <InlineMarkdownRender source={formatNotice(t, notice)} />
+                    {notice.type === NoticeType.Normal ? (
+                      <InlineMarkdown fz="sm" fw={500} c="dimmed" source={formatNotice(t, notice)} />
+                    ) : (
+                      <Text fz="sm" fw={500} c="dimmed" className={typoClasses.inline}>
+                        {formatNotice(t, notice)}
+                      </Text>
+                    )}
                   </Stack>
                 </List.Item>
               ))}
             </List>
           </ScrollArea>
         ) : (
-          <Center h="calc(100vh - 25rem)">
+          <Center h={PANEL_HEIGHT}>
             <Empty description={t('game.content.no_notice')} />
           </Center>
         )}
@@ -215,5 +200,3 @@ const GameNoticePanel: FC = () => {
     </Card>
   )
 }
-
-export default GameNoticePanel

@@ -4,30 +4,30 @@ using GZCTF.Extensions;
 namespace GZCTF.Models.Request.Account;
 
 /// <summary>
-/// 注册账号
+/// Account registration
 /// </summary>
 public class RegisterModel : ModelWithCaptcha
 {
     /// <summary>
-    /// 用户名
+    /// Username
     /// </summary>
     [Required(ErrorMessageResourceName = nameof(Resources.Program.Model_UserNameRequired),
         ErrorMessageResourceType = typeof(Resources.Program))]
-    [MinLength(3, ErrorMessageResourceName = nameof(Resources.Program.Model_UserNameTooShort),
+    [MinLength(Limits.MinUserNameLength, ErrorMessageResourceName = nameof(Resources.Program.Model_UserNameTooShort),
         ErrorMessageResourceType = typeof(Resources.Program))]
-    [MaxLength(15, ErrorMessageResourceName = nameof(Resources.Program.Model_UserNameTooLong),
+    [MaxLength(Limits.MaxUserNameLength, ErrorMessageResourceName = nameof(Resources.Program.Model_UserNameTooLong),
         ErrorMessageResourceType = typeof(Resources.Program))]
     public string UserName { get; set; } = string.Empty;
 
     /// <summary>
-    /// 密码
+    /// Password
     /// </summary>
     [Required(ErrorMessageResourceName = nameof(Resources.Program.Model_PasswordRequired),
         ErrorMessageResourceType = typeof(Resources.Program))]
     public string Password { get; set; } = string.Empty;
 
     /// <summary>
-    /// 邮箱
+    /// Email
     /// </summary>
     [Required(ErrorMessageResourceName = nameof(Resources.Program.Model_EmailRequired),
         ErrorMessageResourceType = typeof(Resources.Program))]
